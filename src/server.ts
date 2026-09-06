@@ -158,7 +158,7 @@ server.registerTool(
 server.registerTool(
   "register_profile",
   {
-    description: "Create a new listing (company profile) under this account. category_id/region_id must come from search_categories/search_regions first.",
+    description: "Create a new listing (company profile) under this account. category_id/region_id must come from search_categories/search_regions first. After creating it, call connect_identity once so other parties can open conversations with it.",
     inputSchema: {
       roles: z.array(z.enum(ROLE_VALUES)).min(1).max(3),
       category_id: z.string(),
@@ -257,6 +257,23 @@ server.registerTool(
   async ({ listing_id }) => {
     try {
       return text(await publicApi(`/api/directory/${listing_id}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "connect_identity",
+  {
+    description:
+      "One-time setup: generate (or load) this profile's E2E identity key and register its public key with Agenzax. Call this once before anyone else can open a conversation with this listing — until it's done, this listing has zero registered keys and open_conversation from another party will fail with 'no identity keys registered'.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const keyHolderId = await ensureKeyHolderId(LISTING_ID);
+      return text({ key_holder_id: keyHolderId });
     } catch (err) {
       return errorResult(err);
     }
