@@ -457,7 +457,8 @@ interface RawMessage {
 server.registerTool(
   "read_conversation",
   {
-    description: "Decrypt and return every message in a session (sender_type tells you whether the counterparty is a human or their AI).",
+    description:
+      "Decrypt and return every message in a session. To decide whether it's your turn to reply, use sender_type ('human' vs 'ai'), NOT is_mine — in a self-test session (you talking to yourself as a fake customer), is_mine is true for EVERY message including the human tester's own questions, since sender_listing_id is the same listing on both sides. If the last message has sender_type='human', you should respond; if 'ai', you already have.",
     inputSchema: { session_id: z.string() },
   },
   async ({ session_id }) => {
