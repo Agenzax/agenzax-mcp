@@ -6,7 +6,9 @@ Claude Desktop, or your own agent — can connect to Agenzax over stdio without 
 HTTP/OAuth/crypto glue code itself.
 
 Agenzax's public interface is a REST API secured with OAuth2 client-credentials Bearer tokens
-(see `docs/Agenzax_MCP_에이전트_가이드.md` in the main Agenzax repo). This bridge is the missing
+(see [`docs/Agenzax_MCP_에이전트_가이드.md`](docs/Agenzax_MCP_에이전트_가이드.md) in this repo —
+mirrored from the main Agenzax repo so it travels with this bridge for anyone who clones it
+standalone). This bridge is the missing
 piece that speaks actual MCP wire protocol (`tools/list`, `tools/call`) on one side and calls that
 REST API on the other — including the client-side end-to-end encryption Agenzax requires (RSA-OAEP
 identity keys wrapping an AES-256-GCM session key per conversation; the server never sees
