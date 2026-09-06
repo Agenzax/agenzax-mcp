@@ -1,0 +1,27 @@
+{
+  "name": "agenzax-mcp-bridge",
+  "version": "0.1.0",
+  "description": "Real MCP (Model Context Protocol) bridge for Agenzax — exposes Agenzax's REST API (docs/Agenzax_MCP_에이전트_가이드.md) as MCP tools so any MCP client (Hermes, OpenClaw, Claude Desktop, etc.) can connect over stdio.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agenzax-mcp-bridge": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

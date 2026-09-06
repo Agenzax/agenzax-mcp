@@ -1,0 +1,371 @@
+#!/usr/bin/env node
+// Agenzax MCP bridge — translates Agenzax's REST API (docs/Agenzax_MCP_에이전트_가이드.md,
+// /api/v1/*, OAuth2 client-credentials Bearer) into real MCP tools (tools/list, tools/call) so
+// any MCP client (Hermes, OpenClaw, Claude Desktop, etc.) can connect over stdio.
+//
+// One process = one Agenzax listing (one company profile). To operate multiple profiles, run one
+// instance of this bridge per profile, each with its own env below.
+//
+// Required env:
+//   AGENZAX_CLIENT_ID, AGENZAX_CLIENT_SECRET  — issued at <your Agenzax dashboard>/dashboard/agent
+//   AGENZAX_LISTING_ID                        — the listing this profile answers as
+//   AGENZAX_STATE_DIR                         — directory to persist this profile's identity key
+//                                                and OAuth token cache
+// Optional:
+//   AGENZAX_BASE_URL (default https://agenzax.ai)
+
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { join } from "path";
+import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  loadOrCreateIdentityKey,
+  derivePublicKey,
+  unwrapSessionKey,
+  wrapSessionKeyForRecipient,
+  importPublicKey,
+  generateSessionKey,
+  encryptMessage,
+  decryptMessage,
+} from "./crypto.js";
+import { bufferToBase64, base64ToBuffer } from "./binary.js";
+import { ROLE_VALUES } from "./roles.js";
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} environment variable is required.`);
+  return value;
+}
+
+const BASE = process.env.AGENZAX_BASE_URL ?? "https://agenzax.ai";
+const CLIENT_ID = requiredEnv("AGENZAX_CLIENT_ID");
+const CLIENT_SECRET = requiredEnv("AGENZAX_CLIENT_SECRET");
+const LISTING_ID = requiredEnv("AGENZAX_LISTING_ID");
+const STATE_DIR = requiredEnv("AGENZAX_STATE_DIR");
+if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
+
+const tokenCachePath = join(STATE_DIR, "token-cache.json");
+async function getBearer(): Promise<string> {
+  if (existsSync(tokenCachePath)) {
+    const cached = JSON.parse(readFileSync(tokenCachePath, "utf8"));
+    if (cached.expires_at > Date.now() + 30_000) return cached.access_token;
+  }
+  const res = await fetch(`${BASE}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ grant_type: "client_credentials", client_id: CLIENT_ID, client_secret: CLIENT_SECRET }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(`Token request failed: ${JSON.stringify(json)}`);
+  writeFileSync(tokenCachePath, JSON.stringify({ access_token: json.access_token, expires_at: Date.now() + json.expires_in * 1000 }));
+  return json.access_token;
+}
+
+async function api(path: string, opts: RequestInit = {}) {
+  const bearer = await getBearer();
+  const res = await fetch(BASE + path, {
+    ...opts,
+    headers: { ...(opts.headers ?? {}), Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(`${path} failed (${res.status}): ${JSON.stringify(json)}`);
+  return json;
+}
+
+/** Identity key registries are public (Agenzax tech spec 4.2) — no auth needed to read them. */
+async function publicApi(path: string) {
+  const res = await fetch(BASE + path);
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(`${path} failed (${res.status}): ${JSON.stringify(json)}`);
+  return json;
+}
+
+function keyHolderIdPath(listingId: string) {
+  return join(STATE_DIR, `keyholder-${listingId}.txt`);
+}
+
+async function ensureKeyHolderId(listingId: string): Promise<string> {
+  const { publicKeySpki } = await loadOrCreateIdentityKey(STATE_DIR, listingId);
+  if (publicKeySpki) {
+    const result = await api(`/api/v1/listings/${listingId}/identity-keys`, {
+      method: "POST",
+      body: JSON.stringify({ public_key: bufferToBase64(publicKeySpki), device_label: "mcp-bridge" }),
+    });
+    writeFileSync(keyHolderIdPath(listingId), result.id);
+    return result.id;
+  }
+  if (!existsSync(keyHolderIdPath(listingId))) {
+    throw new Error(`Identity key exists but no key_holder_id was found (${keyHolderIdPath(listingId)}) — AGENZAX_STATE_DIR may be corrupted.`);
+  }
+  return readFileSync(keyHolderIdPath(listingId), "utf8").trim();
+}
+
+async function getSessionKey(sessionId: string, listingId: string) {
+  const { privateKey } = await loadOrCreateIdentityKey(STATE_DIR, listingId);
+  const keyHolderId = await ensureKeyHolderId(listingId);
+  const { encrypted_session_key } = await api(`/api/v1/sessions/${sessionId}/key?key_holder_id=${keyHolderId}`);
+  return unwrapSessionKey(base64ToBuffer(encrypted_session_key), privateKey);
+}
+
+interface PublicIdentityKey {
+  id: string;
+  key_holder_role: "agent" | "owner_view";
+  device_label: string | null;
+  public_key: string;
+}
+
+function text(value: unknown) {
+  return { content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] };
+}
+
+function errorResult(err: unknown) {
+  return { content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }], isError: true };
+}
+
+const server = new McpServer({ name: "agenzax", version: "0.1.0" });
+
+server.registerTool(
+  "search_categories",
+  {
+    description: "Search Agenzax's industry taxonomy — call this before register_profile/search_directory to resolve a category_id.",
+    inputSchema: { q: z.string().describe("Search text, any language"), locale: z.string().optional() },
+  },
+  async ({ q, locale }) => {
+    try {
+      return text(await api(`/api/v1/categories/search?q=${encodeURIComponent(q)}${locale ? `&locale=${locale}` : ""}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "search_regions",
+  {
+    description: "Search Agenzax's region taxonomy — call this before register_profile/search_directory to resolve a region_id.",
+    inputSchema: { q: z.string(), country_only: z.boolean().optional() },
+  },
+  async ({ q, country_only }) => {
+    try {
+      return text(await api(`/api/v1/regions/search?q=${encodeURIComponent(q)}${country_only ? "&country_only=1" : ""}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "register_profile",
+  {
+    description: "Create a new listing (company profile) under this account. category_id/region_id must come from search_categories/search_regions first.",
+    inputSchema: {
+      roles: z.array(z.enum(ROLE_VALUES)).min(1).max(3),
+      category_id: z.string(),
+      one_liner: z.string().max(80),
+      collab_interest: z.string().max(500).optional(),
+      region_id: z.string().optional(),
+    },
+  },
+  async (args) => {
+    try {
+      return text(await api("/api/v1/listings", { method: "POST", body: JSON.stringify(args) }));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "search_directory",
+  {
+    description: "Search other companies'/individuals' public listings (natural-language query + structured filters).",
+    inputSchema: {
+      query: z.string().optional(),
+      category_id: z.string().optional(),
+      region_id: z.string().optional(),
+      roles: z.array(z.enum(ROLE_VALUES)).optional(),
+    },
+  },
+  async ({ query, category_id, region_id, roles }) => {
+    try {
+      const params = new URLSearchParams();
+      if (query) params.set("query", query);
+      if (category_id) params.set("category_id", category_id);
+      if (region_id) params.set("region_id", region_id);
+      if (roles?.length) params.set("roles", roles.join(","));
+      return text(await api(`/api/v1/directory/search?${params.toString()}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "get_profile",
+  {
+    description: "Look up a counterparty listing's public profile for identity verification — company name, email-domain verification tier, etc. The raw email address is never exposed (PII).",
+    inputSchema: { listing_id: z.string() },
+  },
+  async ({ listing_id }) => {
+    try {
+      return text(await publicApi(`/api/directory/${listing_id}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "open_conversation",
+  {
+    description: `Start a new conversation from this profile (listing ${LISTING_ID}) to another listing. Fans the session key out to every identity key registered on the target listing.`,
+    inputSchema: { target_listing_id: z.string(), message: z.string().min(1) },
+  },
+  async ({ target_listing_id, message }) => {
+    try {
+      const myKeyHolderId = await ensureKeyHolderId(LISTING_ID);
+      const myPublicKeySpki = await derivePublicKey(STATE_DIR, LISTING_ID);
+
+      const { keys: targetKeys } = (await publicApi(`/api/listings/${target_listing_id}/identity-keys`)) as { keys: PublicIdentityKey[] };
+      if (targetKeys.length === 0) {
+        throw new Error("The target listing has no identity keys registered yet — no agent or human has connected to it.");
+      }
+
+      const sessionKey = await generateSessionKey();
+      const wrappedKeys = [
+        {
+          key_holder_id: myKeyHolderId,
+          encrypted_session_key: bufferToBase64(await wrapSessionKeyForRecipient(sessionKey, await importPublicKey(myPublicKeySpki))),
+        },
+      ];
+      for (const k of targetKeys) {
+        wrappedKeys.push({
+          key_holder_id: k.id,
+          encrypted_session_key: bufferToBase64(await wrapSessionKeyForRecipient(sessionKey, await importPublicKey(base64ToBuffer(k.public_key)))),
+        });
+      }
+
+      const { ciphertext, iv } = await encryptMessage(sessionKey, message);
+      const result = await api("/api/v1/sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          sender_listing_id: LISTING_ID,
+          target_listing_id,
+          initial_message: { ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv), wrapped_keys: wrappedKeys },
+        }),
+      });
+      return text(result);
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "send_message",
+  {
+    description: "Send a message into an already-open session. Always check the returned delivery_status (delivered/held/blocked) — held/blocked means it was not actually delivered yet.",
+    inputSchema: { session_id: z.string(), message: z.string().min(1) },
+  },
+  async ({ session_id, message }) => {
+    try {
+      const sessionKey = await getSessionKey(session_id, LISTING_ID);
+      const { ciphertext, iv } = await encryptMessage(sessionKey, message);
+      return text(
+        await api(`/api/v1/sessions/${session_id}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ sender_listing_id: LISTING_ID, ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv) }),
+        })
+      );
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+interface RawMessage {
+  id: string;
+  sender_listing_id: string;
+  sender_type: string;
+  delivery_status: string;
+  ciphertext: string;
+  iv: string;
+  created_at: string;
+  read_at: string | null;
+}
+
+server.registerTool(
+  "read_conversation",
+  {
+    description: "Decrypt and return every message in a session (sender_type tells you whether the counterparty is a human or their AI).",
+    inputSchema: { session_id: z.string() },
+  },
+  async ({ session_id }) => {
+    try {
+      const sessionKey = await getSessionKey(session_id, LISTING_ID);
+      const { messages } = await api(`/api/v1/sessions/${session_id}/messages?listing_id=${LISTING_ID}`);
+      const out = [];
+      for (const m of messages as RawMessage[]) {
+        let plaintext: string | null = null;
+        let decryptFailed = false;
+        try {
+          plaintext = await decryptMessage(sessionKey, base64ToBuffer(m.ciphertext), base64ToBuffer(m.iv));
+        } catch {
+          decryptFailed = true;
+        }
+        out.push({
+          id: m.id,
+          sender_listing_id: m.sender_listing_id,
+          is_mine: m.sender_listing_id === LISTING_ID,
+          sender_type: m.sender_type,
+          delivery_status: m.delivery_status,
+          created_at: m.created_at,
+          read_at: m.read_at,
+          plaintext,
+          decryptFailed,
+        });
+      }
+      return text(out);
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "list_my_sessions",
+  { description: "List session ids this profile's identity key can access (combine with read_conversation).", inputSchema: {} },
+  async () => {
+    try {
+      return text(await api(`/api/v1/listings/${LISTING_ID}/sessions`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "list_pending_events",
+  {
+    description: "Poll for unread notifications (new session opened / new message received) — the fallback for agents that don't run a webhook receiver. Fetched events are marked consumed and won't be returned again.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return text(await api(`/api/v1/events?listing_id=${LISTING_ID}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((err) => {
+  console.error("Agenzax MCP bridge failed to start:", err instanceof Error ? err.message : err);
+  process.exit(1);
+});
