@@ -287,20 +287,20 @@ function pskPath(listingId: string) {
 }
 
 server.registerTool(
-  "generate_pairing_secret",
+  "get_pairing_secret",
   {
     description:
-      "Generate a pairing secret (PSK) so a human teammate's browser (or another device) can be granted access to this profile's past conversation history. Agenzax's server never sees this value — show it to whoever needs to pair, over a secure channel, then have them enter it in the 'request access' prompt on the conversation page and call respond_pairing_requests here afterward. Only generates once; if one already exists it is not re-shown (delete it from AGENZAX_STATE_DIR to force a new one).",
+      "Get this profile's pairing secret (PSK) so a human teammate's browser (or another device) can be granted access to this profile's past conversation history — generates one on first call, and returns the same one on every later call (same behavior as the 'device pairing' section of the Agenzax web dashboard, which also always shows it). Agenzax's server never sees this value. Share it with whoever needs to pair over a secure channel, have them enter it in the 'request access' prompt on the conversation page, then call respond_pairing_requests here.",
     inputSchema: {},
   },
   async () => {
     try {
       if (existsSync(pskPath(LISTING_ID))) {
-        return text("A pairing secret already exists for this profile. It's shown only once at creation — check wherever you saved it the first time, or delete the psk file in AGENZAX_STATE_DIR to generate a new one (this invalidates the old one for future pairings, past ones already completed are unaffected).");
+        return text({ pairing_secret: readFileSync(pskPath(LISTING_ID), "utf8").trim() });
       }
       const psk = generatePairingSecret();
       writeFileSync(pskPath(LISTING_ID), psk);
-      return text({ pairing_secret: psk, warning: "Shown only this once. Share it securely — it grants access to this profile's conversation history." });
+      return text({ pairing_secret: psk });
     } catch (err) {
       return errorResult(err);
     }
@@ -318,13 +318,13 @@ server.registerTool(
   "respond_pairing_requests",
   {
     description:
-      "Check for pending device-pairing (backfill) requests against this profile and, for each one whose signature verifies against the pairing secret from generate_pairing_secret, grant it access by re-wrapping this profile's known session keys for the new device. Requires a pairing secret to already exist (see generate_pairing_secret). This consumes pending events, same as list_pending_events.",
+      "Check for pending device-pairing (backfill) requests against this profile and, for each one whose signature verifies against the pairing secret from get_pairing_secret, grant it access by re-wrapping this profile's known session keys for the new device. Requires a pairing secret to already exist (see get_pairing_secret). This consumes pending events, same as list_pending_events.",
     inputSchema: {},
   },
   async () => {
     try {
       if (!existsSync(pskPath(LISTING_ID))) {
-        return errorResult(new Error("No pairing secret found for this profile — call generate_pairing_secret first."));
+        return errorResult(new Error("No pairing secret found for this profile — call get_pairing_secret first."));
       }
       const psk = readFileSync(pskPath(LISTING_ID), "utf8").trim();
       const myKeyHolderId = await ensureKeyHolderId(LISTING_ID);
