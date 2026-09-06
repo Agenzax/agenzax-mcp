@@ -68,6 +68,16 @@ export async function unwrapSessionKey(encryptedSessionKey: ArrayBuffer, myPriva
   return crypto.subtle.importKey("raw", raw, AES_ALG, false, ["encrypt", "decrypt"]);
 }
 
+/**
+ * Same as unwrapSessionKey but extractable — only the backfill responder needs this (it has to
+ * re-export the raw key bytes to re-wrap them for a new device's public key). Never use this for
+ * normal message decryption; it needlessly widens the key's exposure surface.
+ */
+export async function unwrapSessionKeyExtractable(encryptedSessionKey: ArrayBuffer, myPrivateKey: CryptoKey): Promise<CryptoKey> {
+  const raw = await crypto.subtle.decrypt(RSA_ALG, myPrivateKey, encryptedSessionKey);
+  return crypto.subtle.importKey("raw", raw, AES_ALG, true, ["encrypt", "decrypt"]);
+}
+
 export async function encryptMessage(sessionKey: CryptoKey, plaintext: string): Promise<{ ciphertext: ArrayBuffer; iv: ArrayBuffer }> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(plaintext);

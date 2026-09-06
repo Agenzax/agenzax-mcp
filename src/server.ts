@@ -23,6 +23,7 @@ import {
   loadOrCreateIdentityKey,
   derivePublicKey,
   unwrapSessionKey,
+  unwrapSessionKeyExtractable,
   wrapSessionKeyForRecipient,
   importPublicKey,
   generateSessionKey,
@@ -31,6 +32,7 @@ import {
 } from "./crypto.js";
 import { bufferToBase64, base64ToBuffer } from "./binary.js";
 import { ROLE_VALUES } from "./roles.js";
+import { generatePairingSecret, verifyBackfillRequest } from "./pairing.js";
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -274,6 +276,99 @@ server.registerTool(
     try {
       const keyHolderId = await ensureKeyHolderId(LISTING_ID);
       return text({ key_holder_id: keyHolderId });
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+function pskPath(listingId: string) {
+  return join(STATE_DIR, `psk-${listingId}.txt`);
+}
+
+server.registerTool(
+  "generate_pairing_secret",
+  {
+    description:
+      "Generate a pairing secret (PSK) so a human teammate's browser (or another device) can be granted access to this profile's past conversation history. Agenzax's server never sees this value — show it to whoever needs to pair, over a secure channel, then have them enter it in the 'request access' prompt on the conversation page and call respond_pairing_requests here afterward. Only generates once; if one already exists it is not re-shown (delete it from AGENZAX_STATE_DIR to force a new one).",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      if (existsSync(pskPath(LISTING_ID))) {
+        return text("A pairing secret already exists for this profile. It's shown only once at creation — check wherever you saved it the first time, or delete the psk file in AGENZAX_STATE_DIR to generate a new one (this invalidates the old one for future pairings, past ones already completed are unaffected).");
+      }
+      const psk = generatePairingSecret();
+      writeFileSync(pskPath(LISTING_ID), psk);
+      return text({ pairing_secret: psk, warning: "Shown only this once. Share it securely — it grants access to this profile's conversation history." });
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+interface BackfillRequestedPayload {
+  requesting_key_holder_id: string;
+  requesting_public_key: string;
+  signature: string;
+  timestamp: number;
+}
+
+server.registerTool(
+  "respond_pairing_requests",
+  {
+    description:
+      "Check for pending device-pairing (backfill) requests against this profile and, for each one whose signature verifies against the pairing secret from generate_pairing_secret, grant it access by re-wrapping this profile's known session keys for the new device. Requires a pairing secret to already exist (see generate_pairing_secret). This consumes pending events, same as list_pending_events.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      if (!existsSync(pskPath(LISTING_ID))) {
+        return errorResult(new Error("No pairing secret found for this profile — call generate_pairing_secret first."));
+      }
+      const psk = readFileSync(pskPath(LISTING_ID), "utf8").trim();
+      const myKeyHolderId = await ensureKeyHolderId(LISTING_ID);
+      const { privateKey } = await loadOrCreateIdentityKey(STATE_DIR, LISTING_ID);
+
+      const { events } = await api(`/api/v1/events?listing_id=${LISTING_ID}`);
+      const requests = (events as { event_type: string; payload: BackfillRequestedPayload }[]).filter(
+        (e) => e.event_type === "key_backfill_requested"
+      );
+      if (requests.length === 0) return text("No pending pairing requests.");
+
+      const { sessions } = await api(`/api/v1/listings/${LISTING_ID}/sessions`);
+      const mine = (sessions as { session_id: string; epoch: number; key_holder_id: string }[]).filter((s) => s.key_holder_id === myKeyHolderId);
+
+      const results = [];
+      for (const event of requests) {
+        const { requesting_key_holder_id, requesting_public_key, signature, timestamp } = event.payload;
+        const valid = await verifyBackfillRequest(psk, requesting_public_key, timestamp, signature);
+        if (!valid) {
+          results.push({ requesting_key_holder_id, granted: false, reason: "signature verification failed — possible forgery, ignored" });
+          continue;
+        }
+
+        const targetPublicKey = await importPublicKey(base64ToBuffer(requesting_public_key));
+        const wraps = [];
+        for (const s of mine) {
+          const { encrypted_session_key } = await api(`/api/v1/sessions/${s.session_id}/key?key_holder_id=${myKeyHolderId}`);
+          const sessionKey = await unwrapSessionKeyExtractable(base64ToBuffer(encrypted_session_key), privateKey);
+          const rewrapped = await wrapSessionKeyForRecipient(sessionKey, targetPublicKey);
+          wraps.push({ session_id: s.session_id, epoch: s.epoch, encrypted_session_key: bufferToBase64(rewrapped) });
+        }
+
+        if (wraps.length === 0) {
+          results.push({ requesting_key_holder_id, granted: false, reason: "no past sessions to share" });
+          continue;
+        }
+
+        const result = await api(`/api/v1/listings/${LISTING_ID}/backfill-keys`, {
+          method: "POST",
+          body: JSON.stringify({ target_key_holder_id: requesting_key_holder_id, wraps }),
+        });
+        results.push({ requesting_key_holder_id, granted: true, backfilled: result.backfilled });
+      }
+      return text(results);
     } catch (err) {
       return errorResult(err);
     }
