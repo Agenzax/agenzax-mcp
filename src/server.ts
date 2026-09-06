@@ -177,6 +177,53 @@ server.registerTool(
 );
 
 server.registerTool(
+  "list_my_listings",
+  {
+    description:
+      "List every listing (profile) registered under this account, including drafts. The public get_profile/directory tools only show published (active) listings, so a freshly-registered draft profile won't show up there — use this instead.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return text(await api("/api/v1/listings"));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "get_my_listing",
+  {
+    description: "Get the full detail of one of this account's own listings (any publish_status, including draft) — roles, category, rich_context, outbound_tier, reputation, etc.",
+    inputSchema: { listing_id: z.string().optional().describe(`Defaults to this profile's own listing (${LISTING_ID}) if omitted.`) },
+  },
+  async ({ listing_id }) => {
+    try {
+      return text(await api(`/api/v1/listings/${listing_id ?? LISTING_ID}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "register_webhook",
+  {
+    description:
+      "Register a webhook URL for this profile so Agenzax pushes new-session/new-message events instead of requiring you to poll list_pending_events. Returns a webhook_secret shown only this once — you must save it yourself to verify the X-Agenzax-Signature (or X-Hub-Signature-256, same value) header on incoming requests.",
+    inputSchema: { webhook_url: z.string().url() },
+  },
+  async ({ webhook_url }) => {
+    try {
+      return text(await api(`/api/v1/listings/${LISTING_ID}/webhook`, { method: "PUT", body: JSON.stringify({ webhook_url }) }));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
   "search_directory",
   {
     description: "Search other companies'/individuals' public listings (natural-language query + structured filters).",
