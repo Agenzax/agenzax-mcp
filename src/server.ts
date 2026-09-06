@@ -33,6 +33,7 @@ import {
 import { bufferToBase64, base64ToBuffer } from "./binary.js";
 import { ROLE_VALUES } from "./roles.js";
 import { generatePairingSecret, verifyBackfillRequest } from "./pairing.js";
+import { startRealtimeClient } from "./realtime.js";
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -547,6 +548,17 @@ server.registerTool(
 );
 
 async function main() {
+  // 웹훅(공인 서버 필요)의 대안으로 아웃바운드 웹소켓을 상시 열어둔다 — 인바운드 포트가
+  // 필요 없어 방화벽/NAT 뒤 참여사도 기본으로 쓸 수 있는 경로. 연결 실패는 치명적이지 않다
+  // (register_webhook으로 등록한 웹훅이나 list_pending_events 폴링이 여전히 남아있다).
+  startRealtimeClient({
+    baseUrl: BASE,
+    listingId: LISTING_ID,
+    getBearer,
+    localWakeUrl: process.env.AGENZAX_LOCAL_WAKE_URL,
+    localWakeSecret: process.env.AGENZAX_LOCAL_WAKE_SECRET,
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
