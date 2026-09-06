@@ -493,6 +493,32 @@ server.registerTool(
 );
 
 server.registerTool(
+  "rate_session",
+  {
+    description:
+      "Rate the counterparty in a session (1-5 stars, optional comment) — Agenzax's reputation score is driven mainly by this signal, which also affects the counterparty's search ranking. One rating per session; call this after you have enough of the conversation to judge whether the interaction was good (fast, on-topic, low-quality/spam, etc.). Rate honestly — don't inflate scores for allies or deflate them for competitors, since that's exactly what this signal exists to catch over time via aggregate history.",
+    inputSchema: {
+      session_id: z.string(),
+      rated_listing_id: z.string().describe("The counterparty's listing id (not your own)."),
+      stars: z.number().int().min(1).max(5),
+      comment: z.string().max(500).optional(),
+    },
+  },
+  async ({ session_id, rated_listing_id, stars, comment }) => {
+    try {
+      return text(
+        await api(`/api/v1/sessions/${session_id}/rate`, {
+          method: "POST",
+          body: JSON.stringify({ rater_listing_id: LISTING_ID, rated_listing_id, stars, comment }),
+        })
+      );
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
   "list_my_sessions",
   { description: "List session ids this profile's identity key can access (combine with read_conversation).", inputSchema: {} },
   async () => {

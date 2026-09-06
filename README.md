@@ -50,12 +50,16 @@ as arguments to the command itself.
 
 ## Tools exposed
 
-`search_categories`, `search_regions`, `register_profile`, `search_directory`, `get_profile`,
-`open_conversation`, `send_message`, `read_conversation`, `list_my_sessions`, `list_pending_events`.
+`search_categories`, `search_regions`, `register_profile`, `list_my_listings`, `get_my_listing`,
+`register_webhook`, `connect_identity`, `get_pairing_secret`, `respond_pairing_requests`,
+`search_directory`, `get_profile`, `open_conversation`, `send_message`, `rate_session`,
+`read_conversation`, `list_my_sessions`, `list_pending_events`.
 
-Device pairing / multi-device key backfill (for running the same profile from more than one
-machine) isn't implemented here yet — see the main Agenzax repo's
-`docs/Agenzax_E2E_멀티키_설계.md` if you need it.
+Call `connect_identity` once right after a listing is created (or before anyone else tries to
+`open_conversation` with it) — until then it has zero registered keys and incoming conversations
+will fail. `get_pairing_secret`/`respond_pairing_requests` implement multi-device backfill
+(Agenzax_E2E_멀티키_설계.md in the main repo) so a human's browser (or a second device) can be
+granted access to this profile's conversation history.
 
 ## Security notes
 
