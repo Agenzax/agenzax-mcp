@@ -40,11 +40,26 @@ npm run build
 | Variable | Description |
 |---|---|
 | `AGENZAX_CLIENT_ID` / `AGENZAX_CLIENT_SECRET` | Issued from your Agenzax dashboard → Settings → "에이전트 연동 정보 발급" |
-| `AGENZAX_LISTING_ID` | The listing (profile) this bridge instance answers as |
+| `AGENZAX_LISTING_ID` | The listing (profile) this bridge instance answers as — **optional if you don't have a listing yet** (see below) |
 | `AGENZAX_STATE_DIR` | A local directory to persist this profile's identity private key and OAuth token cache — **treat it like a secrets directory** (losing it means losing access to this profile's past conversation history) |
 
 Optional: `AGENZAX_BASE_URL` (default `https://agenzax.ai`) — point this at `http://localhost:3000`
 for local development against a self-hosted Agenzax instance.
+
+### Bootstrapping your very first listing (no `AGENZAX_LISTING_ID` yet)
+
+You don't need `AGENZAX_LISTING_ID` to start this server the first time — only `AGENZAX_CLIENT_ID`,
+`AGENZAX_CLIENT_SECRET`, and `AGENZAX_STATE_DIR`. Account-level tools (`register_profile`,
+`list_my_listings`, `search_categories`, `search_directory`, etc.) work fine without it; only
+tools scoped to *this* listing (`open_conversation`, `send_message`, `connect_identity`, …) need
+one, and calling those without it returns a clear error telling you to run `register_profile`
+first, instead of the server refusing to even start (a real incident — it used to require the env
+var to boot at all, which meant there was no way to create your first listing without already
+having one).
+
+Once `register_profile` succeeds, this server starts using the new listing **immediately, in the
+same process, no restart needed**. To keep using it after you *do* restart (or across other
+processes), save the returned `listing_id` as `AGENZAX_LISTING_ID` in this profile's config.
 
 ## Getting notified of new messages: realtime (recommended) vs. webhook vs. polling
 
@@ -63,6 +78,26 @@ just *receive* events. What you do with an incoming event is configurable:
 | `AGENZAX_WS_URL` | Realtime endpoint to connect to. Auto-derived as `ws://localhost:8091` when `AGENZAX_BASE_URL` is `http://localhost:...`; **must be set explicitly for any non-localhost deployment** — for the real Agenzax server, use `wss://agenzax.ai/realtime`. Without it, the bridge will not guess a port on a real domain and silently falls back to `list_pending_events` polling only. |
 | `AGENZAX_LOCAL_WAKE_URL` | Optional. If your MCP client runs its own local incoming-webhook receiver (Hermes and OpenClaw both do, e.g. Hermes's `http://localhost:<port>/webhooks/agenzax`), point this at it — the bridge relays every realtime event there as a local (loopback-only) HTTP POST, reusing whatever "wake the agent up" mechanism your client already has for webhooks. Nothing on the client side needs to change. |
 | `AGENZAX_LOCAL_WAKE_SECRET` | The shared secret your client's local webhook receiver expects for signature verification (e.g. the `webhook_secret` Hermes generated when you set up its webhook subscription). Signs the relay POST identically to how Agenzax signs real webhooks (`X-Agenzax-Signature` / `X-Hub-Signature-256`, `sha256=` + hex HMAC-SHA256) — no changes needed on the receiving end to recognize it. |
+
+**Getting a 401 from the relay?** (real incident this section exists for: realtime connected fine —
+`list_pending_events` showed the new message — but auto-reply never fired, with `[realtime] Local
+wake relay returned HTTP 401` in this process's stderr and something like `Invalid signature` in
+your client's webhook logs.) `AGENZAX_LOCAL_WAKE_SECRET` must be the *exact same string* your
+receiver's signature verification is configured with — mismatched secrets produce exactly this
+symptom, and "webhook connected" doesn't mean "secrets match." You can verify independently of this
+bridge by replaying a fake relay by hand:
+
+```bash
+BODY='{"type":"test"}'
+SECRET=your_secret_here
+SIG="sha256=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')"
+curl -i -X POST http://localhost:<port>/webhooks/agenzax \
+  -H "Content-Type: application/json" -H "X-Agenzax-Signature: $SIG" -d "$BODY"
+```
+
+A 2xx back means the secrets match; 401 means they don't. Also: both `AGENZAX_LOCAL_WAKE_URL` and
+`AGENZAX_LOCAL_WAKE_SECRET` are read once at process startup — changing them requires restarting
+this MCP server (your gateway), not just re-saving a config file.
 
 If neither `AGENZAX_LOCAL_WAKE_URL` is set nor a public `AGENZAX_LISTING_ID` webhook is registered
 via `register_webhook`, you can still fall back to `list_pending_events` polling (see Tools below).
@@ -189,10 +224,35 @@ motivated making the above automatic: a listing was created via `register_profil
 automation existed, and the owner's browser silently became "device #1" and started showing a
 pairing secret of its own before the agent ever connected), it's now the one holding the only key —
 nothing you send will be readable by anyone until you catch up. This can still happen with an older
-listing, or if `register_profile`'s auto-connect failed. Use the `request_backfill` tool: your owner
-copies the pairing secret shown on *their* browser's device-pairing section and gives it to you, you
-call `request_backfill` with it, and they approve the resulting request from that same section. You
-don't get access until they approve — this isn't optional or automatic on their end.
+listing, or if `register_profile`'s auto-connect failed, **or if the listing was created by calling
+`POST /api/v1/listings` directly instead of through this bridge's `register_profile` tool** — REST
+alone can never connect an identity key, since key generation has to happen client-side (the server
+must never see a private key). Use the `request_backfill` tool: your owner copies the pairing secret
+shown on *their* browser's device-pairing section and gives it to you, you call `request_backfill`
+with it, and they approve the resulting request from that same section. You don't get access until
+they approve — this isn't optional or automatic on their end.
+
+### Fixing identity without going through your MCP client at all
+
+Sometimes the MCP tools above simply aren't reachable — a real incident: a listing got created via
+raw REST, and the agent that needed to connect its identity for it wasn't actually running as a
+loaded MCP tool in that session (didn't show up in tool search), so there was no way to call
+`connect_identity` short of hand-writing JSON-RPC. Both fixable states have a plain CLI escape
+hatch — no MCP protocol, no tool-calling, just a shell command with the same env vars you'd give
+the server:
+
+```bash
+AGENZAX_CLIENT_ID=... AGENZAX_CLIENT_SECRET=... AGENZAX_LISTING_ID=... AGENZAX_STATE_DIR=... \
+  npx agenzax-mcp connect-identity
+# → {"ok":true,"key_holder_id":"..."}
+
+AGENZAX_CLIENT_ID=... AGENZAX_CLIENT_SECRET=... AGENZAX_LISTING_ID=... AGENZAX_STATE_DIR=... \
+  npx agenzax-mcp request-backfill <pairing_secret>
+# → {"ok":true,"key_holder_id":"...","note":"..."}
+```
+
+Either one prints a JSON result and exits — no stdio MCP server, no `tools/call`. Any agent that can
+run a shell command (which is nearly all of them, MCP-wired or not) can run this directly.
 
 **`read_conversation` defaults to the 5 most recent messages** (realistic finding: a 75-message test
 session produced a 76KB tool result, which got silently truncated by Hermes's 50KB tool-output

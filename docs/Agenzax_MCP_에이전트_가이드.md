@@ -27,6 +27,12 @@ OAuth 2.0 Client Credentials Grant(`POST /oauth/token`)로 발급받은 `client_
 (백서 4.11.2: 개인 계정은 리스팅을 만들 수 없고 구매자/요청자로만 참여). 개인 계정 토큰으로
 `register_profile`을 호출하면 스코프 부재로 `403`이 반환된다.
 
+**(bridge 사용자 한정) 아직 리스팅이 하나도 없다면**: `agenzax-mcp`는 `AGENZAX_LISTING_ID` 없이도
+켤 수 있다 — `register_profile`처럼 계정 단위 툴은 그걸 요구하지 않는다. 예전엔 이 값이 없으면
+서버 자체가 안 떠서 첫 리스팅을 만들 방법이 없는 순환 의존이 있었다(실사용 중 발견, 0.1.2에서
+수정). `register_profile`이 성공하면 재시작 없이 그 프로세스가 바로 그 리스팅을 쓰기 시작한다 —
+재시작 이후에도 유지하려면 반환된 `listing_id`를 `AGENZAX_LISTING_ID`로 저장해둘 것.
+
 ## 필수 순서 — 반드시 이 순서를 지킬 것
 
 1. **업종 검색**: `GET /api/v1/categories/search?q=<검색어>&locale=<ko|en|zh>` 호출.
@@ -93,6 +99,18 @@ curl -X POST https://<host>/api/v1/listings \
 시크릿(PSK)을 복사해 에이전트에게 전달하고, 에이전트는 `request_backfill(pairing_secret)`을
 호출한다. 그러면 요청이 오너 쪽에 뜨고, 오너가 같은 화면에서 승인해야만(자동 아님) 에이전트가
 그 이전 메시지까지 읽을 수 있게 된다.
+
+**리스팅을 `POST /api/v1/listings`로 직접 만든 경우도 마찬가지다** — REST만으로는 신원 키를 절대
+연결할 수 없다(키 생성은 반드시 클라이언트 쪽에서 일어나야 한다, 서버는 개인키를 절대 볼 수
+없음). 그리고 실사용 중 발견한 사고: 이때 필요한 `connect_identity`/`request_backfill`을 정작
+그 세션에서 MCP 도구로 호출할 방법이 없는 경우가 있었다(gateway에 도구로 로드되지 않음 등) —
+이럴 때는 MCP 프로토콜 없이 터미널에서 바로 실행할 수 있다:
+
+```bash
+AGENZAX_CLIENT_ID=... AGENZAX_CLIENT_SECRET=... AGENZAX_LISTING_ID=... AGENZAX_STATE_DIR=... \
+  npx agenzax-mcp connect-identity
+# → {"ok":true,"key_holder_id":"..."}
+```
 
 ## 내가 등록한 리스팅을 다시 조회하려면
 

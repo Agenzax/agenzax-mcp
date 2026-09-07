@@ -44,9 +44,25 @@ function requiredEnv(name: string): string {
 const BASE = process.env.AGENZAX_BASE_URL ?? "https://agenzax.ai";
 const CLIENT_ID = requiredEnv("AGENZAX_CLIENT_ID");
 const CLIENT_SECRET = requiredEnv("AGENZAX_CLIENT_SECRET");
-const LISTING_ID = requiredEnv("AGENZAX_LISTING_ID");
+// 실사용 중 발견한 부트스트랩 교착: AGENZAX_LISTING_ID를 필수값으로 두면, 아직 리스팅이
+// 하나도 없는 신규 사용자는 이 서버 자체를 못 띄워서 register_profile(리스팅이 없어도
+// 호출 가능해야 하는 툴)조차 실행할 기회가 없었다 — 리스팅을 만들려면 서버가 떠야 하는데
+// 서버는 뜨려면 리스팅 id가 있어야 하는 순환 의존. 이제 시작 시엔 선택값으로 두고, 실제로
+// 리스팅 id가 필요한 툴 호출 시점에만(requireListingId) 명확한 에러를 낸다. register_profile
+// 성공 시 이 값을 메모리에서 바로 채워서, 같은 프로세스 안에서 재시작 없이 나머지 툴을 바로
+// 쓸 수 있게 한다(다음 재시작부터 영구 반영하려면 여전히 env var에 저장해둬야 함).
+let LISTING_ID: string | undefined = process.env.AGENZAX_LISTING_ID;
 const STATE_DIR = requiredEnv("AGENZAX_STATE_DIR");
 if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
+
+function requireListingId(): string {
+  if (!LISTING_ID) {
+    throw new Error(
+      "AGENZAX_LISTING_ID is not set yet. Call register_profile first — it doesn't need a listing id and, on success, this server can use the new listing immediately without a restart. To keep it after restarting, save AGENZAX_LISTING_ID (the listing_id it returned) in this profile's config."
+    );
+  }
+  return LISTING_ID;
+}
 
 const tokenCachePath = join(STATE_DIR, "token-cache.json");
 async function getBearer(): Promise<string> {
@@ -174,18 +190,30 @@ server.registerTool(
   async (args) => {
     try {
       const result = await api("/api/v1/listings", { method: "POST", body: JSON.stringify(args) });
+      // 실사용 중 발견한 부트스트랩 교착: AGENZAX_LISTING_ID 없이 처음 켠 서버(리스팅이 아직
+      // 하나도 없는 신규 계정)라면, 방금 만든 이 리스팅을 이 프로세스의 "활성 리스팅"으로 바로
+      // 채워서 재시작 없이 open_conversation 등 나머지 툴을 곧바로 쓸 수 있게 한다. 이미
+      // AGENZAX_LISTING_ID가 있던 상태(두 번째 리스팅을 추가로 만드는 경우)는 절대 덮어쓰지
+      // 않는다 — "프로세스 하나 = 리스팅 하나" 원칙이 깨지면 안 됨.
+      const boundNewListing = !LISTING_ID;
+      if (boundNewListing) LISTING_ID = result.listing_id;
+      const bindingNote = boundNewListing
+        ? " This server had no AGENZAX_LISTING_ID set, so it's now using this listing for the rest of this session — no restart needed. To keep using it after a restart, save AGENZAX_LISTING_ID=" +
+          result.listing_id +
+          " in this profile's config."
+        : "";
       // 실사용 중 발견한 사고: connect_identity를 별도 호출로 남겨두면 에이전트가 깜빡하기 쉽고,
       // 그사이 사람이 먼저 웹 대시보드를 열면 브라우저가 "첫 기기"가 되어버려 나중에 연결한
       // 에이전트가 그 전 메시지를 못 읽는다(백필 승인 필요) — 실패 지점 자체를 없앤다.
       try {
         const keyHolderId = await ensureKeyHolderId(result.listing_id);
-        return text({ ...result, identity_connected: true, key_holder_id: keyHolderId });
+        return text({ ...result, identity_connected: true, key_holder_id: keyHolderId, note: bindingNote || undefined });
       } catch (identityErr) {
         return text({
           ...result,
           identity_connected: false,
           identity_error: identityErr instanceof Error ? identityErr.message : String(identityErr),
-          warning: "Listing was created, but connecting its identity key failed — call connect_identity manually before anyone else opens a conversation with it.",
+          warning: "Listing was created, but connecting its identity key failed — call connect_identity manually before anyone else opens a conversation with it." + bindingNote,
         });
       }
     } catch (err) {
@@ -214,11 +242,11 @@ server.registerTool(
   "get_my_listing",
   {
     description: "Get the full detail of one of this account's own listings (any publish_status, including draft) — roles, category, rich_context, outbound_tier, reputation, etc.",
-    inputSchema: { listing_id: z.string().optional().describe(`Defaults to this profile's own listing (${LISTING_ID}) if omitted.`) },
+    inputSchema: { listing_id: z.string().optional().describe(`Defaults to this profile's own listing (${LISTING_ID ?? "not set yet — call register_profile first"}) if omitted.`) },
   },
   async ({ listing_id }) => {
     try {
-      return text(await api(`/api/v1/listings/${listing_id ?? LISTING_ID}`));
+      return text(await api(`/api/v1/listings/${listing_id ?? requireListingId()}`));
     } catch (err) {
       return errorResult(err);
     }
@@ -234,7 +262,7 @@ server.registerTool(
   },
   async ({ webhook_url }) => {
     try {
-      return text(await api(`/api/v1/listings/${LISTING_ID}/webhook`, { method: "PUT", body: JSON.stringify({ webhook_url }) }));
+      return text(await api(`/api/v1/listings/${requireListingId()}/webhook`, { method: "PUT", body: JSON.stringify({ webhook_url }) }));
     } catch (err) {
       return errorResult(err);
     }
@@ -290,7 +318,7 @@ server.registerTool(
   },
   async () => {
     try {
-      const keyHolderId = await ensureKeyHolderId(LISTING_ID);
+      const keyHolderId = await ensureKeyHolderId(requireListingId());
       return text({ key_holder_id: keyHolderId });
     } catch (err) {
       return errorResult(err);
@@ -307,12 +335,12 @@ server.registerTool(
   },
   async ({ pairing_secret }) => {
     try {
-      const keyHolderId = await ensureKeyHolderId(LISTING_ID);
-      const publicKeySpki = await derivePublicKey(STATE_DIR, LISTING_ID);
+      const keyHolderId = await ensureKeyHolderId(requireListingId());
+      const publicKeySpki = await derivePublicKey(STATE_DIR, requireListingId());
       const publicKeyBase64 = bufferToBase64(publicKeySpki);
       const timestamp = Date.now();
       const signature = await signBackfillRequest(pairing_secret, publicKeyBase64, timestamp);
-      await api(`/api/v1/listings/${LISTING_ID}/backfill-requests`, {
+      await api(`/api/v1/listings/${requireListingId()}/backfill-requests`, {
         method: "POST",
         body: JSON.stringify({ requesting_key_holder_id: keyHolderId, signature, timestamp }),
       });
@@ -340,11 +368,11 @@ server.registerTool(
   },
   async () => {
     try {
-      if (existsSync(pskPath(LISTING_ID))) {
-        return text({ pairing_secret: readFileSync(pskPath(LISTING_ID), "utf8").trim() });
+      if (existsSync(pskPath(requireListingId()))) {
+        return text({ pairing_secret: readFileSync(pskPath(requireListingId()), "utf8").trim() });
       }
       const psk = generatePairingSecret();
-      writeFileSync(pskPath(LISTING_ID), psk);
+      writeFileSync(pskPath(requireListingId()), psk);
       return text({ pairing_secret: psk });
     } catch (err) {
       return errorResult(err);
@@ -368,20 +396,20 @@ server.registerTool(
   },
   async () => {
     try {
-      if (!existsSync(pskPath(LISTING_ID))) {
+      if (!existsSync(pskPath(requireListingId()))) {
         return errorResult(new Error("No pairing secret found for this profile — call get_pairing_secret first."));
       }
-      const psk = readFileSync(pskPath(LISTING_ID), "utf8").trim();
-      const myKeyHolderId = await ensureKeyHolderId(LISTING_ID);
-      const { privateKey } = await loadOrCreateIdentityKey(STATE_DIR, LISTING_ID);
+      const psk = readFileSync(pskPath(requireListingId()), "utf8").trim();
+      const myKeyHolderId = await ensureKeyHolderId(requireListingId());
+      const { privateKey } = await loadOrCreateIdentityKey(STATE_DIR, requireListingId());
 
-      const { events } = await api(`/api/v1/events?listing_id=${LISTING_ID}`);
+      const { events } = await api(`/api/v1/events?listing_id=${requireListingId()}`);
       const requests = (events as { event_type: string; payload: BackfillRequestedPayload }[]).filter(
         (e) => e.event_type === "key_backfill_requested"
       );
       if (requests.length === 0) return text("No pending pairing requests.");
 
-      const { sessions } = await api(`/api/v1/listings/${LISTING_ID}/sessions`);
+      const { sessions } = await api(`/api/v1/listings/${requireListingId()}/sessions`);
       const mine = (sessions as { session_id: string; epoch: number; key_holder_id: string }[]).filter((s) => s.key_holder_id === myKeyHolderId);
 
       const results = [];
@@ -407,7 +435,7 @@ server.registerTool(
           continue;
         }
 
-        const result = await api(`/api/v1/listings/${LISTING_ID}/backfill-keys`, {
+        const result = await api(`/api/v1/listings/${requireListingId()}/backfill-keys`, {
           method: "POST",
           body: JSON.stringify({ target_key_holder_id: requesting_key_holder_id, wraps }),
         });
@@ -423,13 +451,13 @@ server.registerTool(
 server.registerTool(
   "open_conversation",
   {
-    description: `Start a new conversation from this profile (listing ${LISTING_ID}) to another listing. Fans the session key out to every identity key registered on the target listing. Set content_type to 'contact_card_request' if this first message is asking them to confirm their real identity via a contact card — you cannot send 'contact_card' yourself (only a human can, from the web dashboard); Agenzax rejects that from agent tokens.`,
+    description: `Start a new conversation from this profile (listing ${LISTING_ID ?? "not set yet — call register_profile first"}) to another listing. Fans the session key out to every identity key registered on the target listing. Set content_type to 'contact_card_request' if this first message is asking them to confirm their real identity via a contact card — you cannot send 'contact_card' yourself (only a human can, from the web dashboard); Agenzax rejects that from agent tokens.`,
     inputSchema: { target_listing_id: z.string(), message: z.string().min(1), content_type: z.enum(["text", "contact_card_request"]).optional() },
   },
   async ({ target_listing_id, message, content_type }) => {
     try {
-      const myKeyHolderId = await ensureKeyHolderId(LISTING_ID);
-      const myPublicKeySpki = await derivePublicKey(STATE_DIR, LISTING_ID);
+      const myKeyHolderId = await ensureKeyHolderId(requireListingId());
+      const myPublicKeySpki = await derivePublicKey(STATE_DIR, requireListingId());
 
       const { keys: targetKeys } = (await publicApi(`/api/listings/${target_listing_id}/identity-keys`)) as { keys: PublicIdentityKey[] };
       if (targetKeys.length === 0) {
@@ -454,7 +482,7 @@ server.registerTool(
       const result = await api("/api/v1/sessions", {
         method: "POST",
         body: JSON.stringify({
-          sender_listing_id: LISTING_ID,
+          sender_listing_id: requireListingId(),
           target_listing_id,
           initial_message: { ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv), wrapped_keys: wrappedKeys, content_type },
         }),
@@ -475,12 +503,12 @@ server.registerTool(
   },
   async ({ session_id, message, content_type }) => {
     try {
-      const sessionKey = await getSessionKey(session_id, LISTING_ID);
+      const sessionKey = await getSessionKey(session_id, requireListingId());
       const { ciphertext, iv } = await encryptMessage(sessionKey, message);
       return text(
         await api(`/api/v1/sessions/${session_id}/messages`, {
           method: "POST",
-          body: JSON.stringify({ sender_listing_id: LISTING_ID, ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv), content_type }),
+          body: JSON.stringify({ sender_listing_id: requireListingId(), ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv), content_type }),
         })
       );
     } catch (err) {
@@ -510,9 +538,9 @@ server.registerTool(
   },
   async ({ session_id, limit, full }) => {
     try {
-      const sessionKey = await getSessionKey(session_id, LISTING_ID);
+      const sessionKey = await getSessionKey(session_id, requireListingId());
       const query = full ? "full=true" : limit ? `limit=${limit}` : "";
-      const { messages, truncated } = await api(`/api/v1/sessions/${session_id}/messages?listing_id=${LISTING_ID}${query ? `&${query}` : ""}`);
+      const { messages, truncated } = await api(`/api/v1/sessions/${session_id}/messages?listing_id=${requireListingId()}${query ? `&${query}` : ""}`);
       const out = [];
       for (const m of messages as RawMessage[]) {
         let plaintext: string | null = null;
@@ -525,7 +553,7 @@ server.registerTool(
         out.push({
           id: m.id,
           sender_listing_id: m.sender_listing_id,
-          is_mine: m.sender_listing_id === LISTING_ID,
+          is_mine: m.sender_listing_id === requireListingId(),
           sender_type: m.sender_type,
           delivery_status: m.delivery_status,
           content_type: m.content_type,
@@ -559,7 +587,7 @@ server.registerTool(
       return text(
         await api(`/api/v1/sessions/${session_id}/rate`, {
           method: "POST",
-          body: JSON.stringify({ rater_listing_id: LISTING_ID, rated_listing_id, stars, comment }),
+          body: JSON.stringify({ rater_listing_id: requireListingId(), rated_listing_id, stars, comment }),
         })
       );
     } catch (err) {
@@ -573,7 +601,7 @@ server.registerTool(
   { description: "List session ids this profile's identity key can access (combine with read_conversation).", inputSchema: {} },
   async () => {
     try {
-      return text(await api(`/api/v1/listings/${LISTING_ID}/sessions`));
+      return text(await api(`/api/v1/listings/${requireListingId()}/sessions`));
     } catch (err) {
       return errorResult(err);
     }
@@ -592,7 +620,7 @@ server.registerTool(
       return text(
         await api(`/api/v1/sessions/${session_id}/review-mode`, {
           method: "POST",
-          body: JSON.stringify({ listing_id: LISTING_ID, reason }),
+          body: JSON.stringify({ listing_id: requireListingId(), reason }),
         })
       );
     } catch (err) {
@@ -609,24 +637,82 @@ server.registerTool(
   },
   async () => {
     try {
-      return text(await api(`/api/v1/events?listing_id=${LISTING_ID}`));
+      return text(await api(`/api/v1/events?listing_id=${requireListingId()}`));
     } catch (err) {
       return errorResult(err);
     }
   }
 );
 
+/**
+ * 실사용 중 발견: 리스팅을 register_profile이 아니라 REST로 직접 만들었거나, 지금 이 MCP
+ * 서버가 에이전트 세션에 도구로 로드되지 않은 상황(Hermes tool_search에 안 뜨는 등)에서는
+ * connect_identity/request_backfill을 MCP 프로토콜로 호출할 방법이 없다 — 사람이든 에이전트든
+ * JSON-RPC를 손으로 짜야 하는 지경까지 갔었다. MCP 없이 그냥 터미널에서 한 줄로 되게 한다.
+ */
+async function runCli(cmd: string, args: string[]): Promise<never> {
+  try {
+    if (cmd === "connect-identity") {
+      const keyHolderId = await ensureKeyHolderId(requireListingId());
+      console.log(JSON.stringify({ ok: true, key_holder_id: keyHolderId }));
+      process.exit(0);
+    }
+    if (cmd === "request-backfill") {
+      const pairingSecret = args[0];
+      if (!pairingSecret) {
+        console.error("Usage: agenzax-mcp request-backfill <pairing_secret>");
+        process.exit(1);
+      }
+      const keyHolderId = await ensureKeyHolderId(requireListingId());
+      const publicKeySpki = await derivePublicKey(STATE_DIR, requireListingId());
+      const publicKeyBase64 = bufferToBase64(publicKeySpki);
+      const timestamp = Date.now();
+      const signature = await signBackfillRequest(pairingSecret, publicKeyBase64, timestamp);
+      await api(`/api/v1/listings/${requireListingId()}/backfill-requests`, {
+        method: "POST",
+        body: JSON.stringify({ requesting_key_holder_id: keyHolderId, signature, timestamp }),
+      });
+      console.log(
+        JSON.stringify({
+          ok: true,
+          key_holder_id: keyHolderId,
+          note: "Backfill request submitted — ask the other device's owner to approve it from the web dashboard.",
+        })
+      );
+      process.exit(0);
+    }
+    console.error(`Unknown command: ${cmd}. Available: connect-identity, request-backfill <pairing_secret>`);
+    process.exit(1);
+  } catch (err) {
+    console.error(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+    process.exit(1);
+  }
+}
+
 async function main() {
+  // MCP 서버 대신 일회성 CLI 커맨드로 실행된 경우 — 도구 호출 없이 바로 실행하고 끝낸다.
+  const [cmd, ...cliArgs] = process.argv.slice(2);
+  if (cmd === "connect-identity" || cmd === "request-backfill") {
+    await runCli(cmd, cliArgs);
+    return;
+  }
+
   // 웹훅(공인 서버 필요)의 대안으로 아웃바운드 웹소켓을 상시 열어둔다 — 인바운드 포트가
   // 필요 없어 방화벽/NAT 뒤 참여사도 기본으로 쓸 수 있는 경로. 연결 실패는 치명적이지 않다
   // (register_webhook으로 등록한 웹훅이나 list_pending_events 폴링이 여전히 남아있다).
-  startRealtimeClient({
-    baseUrl: BASE,
-    listingId: LISTING_ID,
-    getBearer,
-    localWakeUrl: process.env.AGENZAX_LOCAL_WAKE_URL,
-    localWakeSecret: process.env.AGENZAX_LOCAL_WAKE_SECRET,
-  });
+  // 아직 리스팅이 없는 첫 부팅(AGENZAX_LISTING_ID 미설정)이면 연결할 리스팅 자체가 없으니
+  // 건너뛴다 — register_profile로 만든 뒤 AGENZAX_LISTING_ID를 저장하고 재시작하면 붙는다.
+  if (LISTING_ID) {
+    startRealtimeClient({
+      baseUrl: BASE,
+      listingId: LISTING_ID,
+      getBearer,
+      localWakeUrl: process.env.AGENZAX_LOCAL_WAKE_URL,
+      localWakeSecret: process.env.AGENZAX_LOCAL_WAKE_SECRET,
+    });
+  } else {
+    console.error("[realtime] AGENZAX_LISTING_ID not set yet — skipping realtime connection until this server is restarted with it set.");
+  }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
