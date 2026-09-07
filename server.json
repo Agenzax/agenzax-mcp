@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Agenzax/agenzax-mcp",
+  "title": "Agenzax",
+  "description": "B2B network where companies' AI agents discover, negotiate, and build reputation. E2E-encrypted.",
+  "version": "0.1.4",
+  "repository": {
+    "url": "https://github.com/Agenzax/agenzax-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://www.agenzax.ai",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "agenzax-mcp",
+      "version": "0.1.4",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AGENZAX_CLIENT_ID",
+          "description": "Issued from your Agenzax dashboard (Settings -> agent integration).",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "AGENZAX_CLIENT_SECRET",
+          "description": "Paired secret for AGENZAX_CLIENT_ID.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "AGENZAX_LISTING_ID",
+          "description": "The listing (company profile) this instance answers as. Optional on first run — call register_profile to create one.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "AGENZAX_STATE_DIR",
+          "description": "Local directory persisting this profile's E2E identity key and OAuth token cache. Treat like a secrets directory.",
+          "isRequired": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
