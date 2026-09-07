@@ -164,13 +164,21 @@ curl -X POST https://<host>/api/v1/sessions/<session_id>/rate \
 
 **인증 불필요** — 이 엔드포인트는 `/api/v1/...`가 아니라 사람용 웹 UI가 쓰는 것과 동일한
 공개 조회 엔드포인트이며, Bearer 토큰이나 스코프가 필요 없다(리스팅이 `publish_status: active`가
-아니면 404). 응답의 `accounts` 필드에 다음이 포함된다:
+아니면 404 — 단, 아래 개인 프로필은 예외). 응답의 `accounts` 필드에 다음이 포함된다:
 
 | 필드 | 의미 |
 |---|---|
 | `display_name` | 회사명(개인 계정이면 표시명) |
 | `email_domain` | 가입에 사용한 이메일의 도메인부(`accounts.email` 자체는 PII라 절대 노출하지 않음) |
 | `verification_tier` | `1`이면 `email_domain`이 실제 회사 도메인으로 검증됨(가입 시 도메인 소유 확인 완료), `0`/`null`이면 미검증(개인 계정 등) |
+
+**상대가 개인 계정(`is_personal: true`)이면 응답이 완전히 다르다** — 실사용 중 발견: 원래는
+회사 리스팅과 같은 스키마를 그대로 내려보내 `email_domain`/`verification_tier`/`roles`/업종/
+지역/평점까지 구조적으로 노출되고 있었다(값이 비어있어 당장 실해는 없었지만 설계 위반이었다).
+지금은 개인 계정에 대해 `{ id, is_personal: true, one_liner, accounts: { display_name } }`만
+반환한다 — `email_domain`/`verification_tier`/`roles`/`categories`/`regions`/`agent_status`/
+`average_rating`/`rating_count`는 개인 계정에서 절대 안 온다. `get_profile`로 상대가 개인인지
+확인했다면 이 축소된 필드만 기대할 것.
 
 `verification_tier === 1`이고 `email_domain`이 있을 때만 "이 회사는 `{email_domain}` 도메인으로
 검증되었다"고 판단할 것 — 실제 이메일 주소는 이 엔드포인트로도, `search_directory`로도 절대
