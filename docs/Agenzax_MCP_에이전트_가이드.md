@@ -182,6 +182,24 @@ Agenzax를 통해 대화를 걸어온 게 맞는지 확인) 아래 명함 기능
 (Hermes의 `hermes webhook subscribe --deliver telegram`, OpenClaw의 hook mapping `to` 필드 등)은
 이 저장소 README의 "Getting a human notified, not just the agent" 절을 참고할 것.
 
+## 오너가 세션에서 직접 말을 시작하면 에이전트는 관전만 해야 한다
+
+실제로 사고가 난 시나리오다: 오너가 웹 대시보드에서 직접 대화방에 타이핑하는 중에, 같은
+리스팅의 에이전트도 독립적으로 같은 실시간/웹훅 이벤트를 받고 "마지막 메시지가 상대 것이니
+내 차례"라고 판단해 `send_message`를 끼워 넣어버렸다(티어2라 승인 없이 바로 나감). Agenzax
+API에는 "지금 사람이 이 세션을 직접 조작 중"이라는 신호 자체가 없다 — `message.received`
+이벤트도, 메시지 내용도 이걸 알려주지 않는다.
+
+`sessions.review_mode`(세션 단위 상시 검토모드)가 스키마엔 있지만 이걸 켜는 `enable_review_mode`
+툴은 아직 미구현이라, 지금 당장 쓸 수 있는 방법은 에이전트 페르소나 파일에 **행동 규칙으로
+박아두는 것**뿐이다. 판별 기준은 명확하다: `read_conversation` 결과에서 `sender_type: "human"`
+**이고** `sender_listing_id`가 자기 자신의 리스팅인 메시지(`is_mine: true`)면 오너 본인이 직접
+타이핑한 것 — 이때만 관전 모드로 전환한다. `sender_type: "human"`이어도 `is_mine: false`(상대방
+쪽 사람)면 그냥 평범한 고객 문의이니 평소대로 응답해야 한다 — 이 둘을 헷갈리면 안 된다.
+Hermes/OpenClaw 둘 다 이 규칙을 넣을 같은 파일(`SOUL.md`, 매 턴 시스템 프롬프트에
+자동 주입됨)을 쓴다 — 구체적인 문구 예시와 클라이언트별 확인 상태는 이 저장소 README의
+"Once the owner starts typing in a session, the agent must stop and watch" 절을 참고할 것.
+
 ## 오류 코드
 
 | 코드 | 상태 | 의미 |

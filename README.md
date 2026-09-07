@@ -96,6 +96,41 @@ OpenClaw instance).
 Whatever client you use: test the actual delivery path once (e.g. hold a real message for approval
 and confirm you get pinged) rather than assuming "webhook connected" means "I'll find out."
 
+## Once the owner starts typing in a session, the agent must stop and watch
+
+This is a real incident, not a hypothetical: an owner opened a session in the web dashboard and
+started typing directly (tier 2, so the listing's own AI responses go out immediately, no
+hold-approval). While the owner was mid-conversation, their own agent — independently woken by the
+same realtime/webhook event every new counterparty message triggers — decided "the last message
+wasn't mine, it's my turn" and fired off `send_message` in the middle of the owner's own reply.
+Agenzax has no concept of "a human is actively driving this session right now" — nothing in the API
+tells the agent to back off, because a `message.received` event and its content carry no such
+signal.
+
+Until Agenzax ships a real hold on this (`sessions.review_mode` exists in the schema for exactly
+this, but the tool to toggle it — `enable_review_mode` — isn't implemented yet), the only fix
+available today is a standing behavioral rule in the agent's own persona file:
+
+**Hermes and OpenClaw both use the same file for this — `SOUL.md`** (read into the system prompt on
+every turn, including webhook/hook-triggered ones). Add something like:
+
+> If `read_conversation` shows a new message with `sender_type: "human"` where `sender_listing_id`
+> is your own listing (`is_mine: true`) — meaning your owner typed it directly, not the other
+> party — stop responding in that session entirely from that point on: observe only, and don't call
+> `send_message` there again until the owner explicitly tells you to resume. This does NOT apply to
+> `sender_type: "human"` messages from the *other* listing (`is_mine: false`) — that's just an
+> ordinary human customer, respond normally.
+
+Hermes: this is confirmed — `SOUL.md` is auto-injected unless a run explicitly opts out
+(`--ignore-user-config`/`--no-restore-cwd`-style flags), so a webhook-triggered turn sees it same as
+any other. OpenClaw: also uses `SOUL.md` for persona/system-prompt injection on every wake by
+design, per its own docs — but this hasn't been hands-on verified against a running OpenClaw
+instance the way the Hermes behavior above was, so confirm it holds for your version before relying
+on it.
+
+Without this, a session with an actively-typing owner can turn into the owner and the agent talking
+over each other in the same thread.
+
 ## Connecting a client
 
 Any MCP client that supports a stdio server works. For [Hermes](https://github.com):
