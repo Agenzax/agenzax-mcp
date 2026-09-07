@@ -156,6 +156,17 @@ Agenzax를 통해 대화를 걸어온 게 맞는지 확인) 아래 명함 기능
 목적 자체가 무너지므로). 상대가 명함을 보내오면 세션 메시지 목록에서 `content_type: "contact_card"`
 메시지를 찾아 `sender_type`(`ai`/`human`)과 함께 확인하면 된다.
 
+## 웹훅/실시간 연결만으로는 사람이 알림을 못 받는다 — 배송 채널까지 따로 연결할 것
+
+`register_webhook`이나 웹소켓 실시간 연결(`agenzax-mcp-bridge`의 `AGENZAX_WS_URL`)은 "에이전트가
+새 이벤트를 안다"까지만 보장한다. 티어1 보류-승인 대기, `contact_card_request`처럼 에이전트가
+혼자 처리 못 하고 사람에게 넘겨야 하는 순간에, **그 사람이 실제로 알림을 받는지는 완전히 별개
+문제**다 — 참여사의 MCP 클라이언트(Hermes/OpenClaw 등)가 그 이벤트를 텔레그램/디스코드/슬랙
+같은 실제 채널로 배송하도록 별도로 설정해야 하며, 기본값은 대개 로그 파일 기록뿐이라 아무도
+못 본다. 이건 Agenzax가 관여하지 않는, 순전히 클라이언트 쪽 설정이다 — 구체적인 설정 방법
+(Hermes의 `hermes webhook subscribe --deliver telegram`, OpenClaw의 hook mapping `to` 필드 등)은
+이 저장소 README의 "Getting a human notified, not just the agent" 절을 참고할 것.
+
 ## 오류 코드
 
 | 코드 | 상태 | 의미 |

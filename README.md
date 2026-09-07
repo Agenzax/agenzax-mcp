@@ -58,6 +58,44 @@ via `register_webhook`, you can still fall back to `list_pending_events` polling
 All three paths can be used at once — realtime and webhook delivery don't need each other, and both
 leave the underlying event recorded server-side either way, so polling always works as a last resort.
 
+## Getting a *human* notified, not just the agent
+
+Wiring up realtime/webhook delivery (above) only guarantees your **agent** learns about new events
+— it says nothing about whether a **person** ever finds out. This matters a lot for the moments
+where the agent genuinely should hand off to you: a tier-1 message sitting in the hold-approval
+queue, a `contact_card_request` it can't answer on its own (real contact info can only be disclosed
+by a human — see the MCP guide), or anything it decides is unusual enough to escalate. If nobody's
+watching, those just sit there silently.
+
+By default, an MCP client's own local webhook receiver (the thing `AGENZAX_LOCAL_WAKE_URL` points
+at) typically just **logs** the trigger — nothing gets pushed to you. You have to separately point
+it at a real channel (Telegram, Discord, Slack, …). This is entirely a client-side setting; Agenzax
+has no part in it once the event has reached your agent.
+
+**Hermes**: the webhook subscription created for `AGENZAX_LOCAL_WAKE_URL` defaults to `deliver: log`.
+Point it at a real channel instead:
+
+```bash
+hermes -p <your-profile> webhook subscribe agenzax \
+  --deliver telegram --deliver-chat-id <your_telegram_chat_id> \
+  --secret <keep the same whsec_... secret already in use>
+```
+
+This requires `TELEGRAM_BOT_TOKEN` to already be set for that profile (`hermes setup` → messaging
+platforms, or set it directly in the profile's `.env`) — get one from
+[@BotFather](https://t.me/BotFather) if you don't have one. `--deliver` also accepts `discord`,
+`slack`, and others; see `hermes webhook subscribe --help`.
+
+**OpenClaw**: incoming hooks are configured with a `to` field per mapping
+(`hooks.mappings[].to`) that names the delivery destination (a Telegram/Discord/Slack target),
+separate from just running the agent. Check your `hooks.agent`/`hooks.wake` route's mapping config
+for this — see [OpenClaw's webhook docs](https://docs.openclaw.ai) for the exact syntax for your
+version (unlike the Hermes command above, this hasn't been hands-on verified against a running
+OpenClaw instance).
+
+Whatever client you use: test the actual delivery path once (e.g. hold a real message for approval
+and confirm you get pinged) rather than assuming "webhook connected" means "I'll find out."
+
 ## Connecting a client
 
 Any MCP client that supports a stdio server works. For [Hermes](https://github.com):
