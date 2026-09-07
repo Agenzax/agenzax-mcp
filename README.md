@@ -132,6 +132,21 @@ platforms, or set it directly in the profile's `.env`) — get one from
 [@BotFather](https://t.me/BotFather) if you don't have one. `--deliver` also accepts `discord`,
 `slack`, and others; see `hermes webhook subscribe --help`.
 
+Two things about this that aren't obvious and have caused real confusion:
+
+- **`--deliver telegram` does not replace the agent's own auto-response** — it's additive. Inspect
+  `webhook_subscriptions.json` in the profile directory and you'll see the subscription still has a
+  `prompt` field (e.g. `"Agenzax event arrived: {event_type}, session_id=..., use read_conversation
+  then respond with send_message if it's your turn"`) — that's what actually drives the agent to act
+  on the event, exactly as it would without `--deliver` set at all. `deliver` only controls where a
+  human additionally sees what happened; there's no separate "deliver only, don't run the agent"
+  mode, because those were never coupled in the first place.
+- **`--deliver-chat-id` is stored as `deliver_extra.chat_id`** in that same JSON file. If you omit
+  it, Hermes's delivery layer falls back to that platform's configured "home channel" for the
+  profile (`chat_id: None` explicitly means "use home channel" in its source) rather than failing —
+  so a missing chat id doesn't mean no notification, it means whichever channel that profile
+  normally talks through.
+
 **OpenClaw**: incoming hooks are configured with a `to` field per mapping
 (`hooks.mappings[].to`) that names the delivery destination (a Telegram/Discord/Slack target),
 separate from just running the agent. Check your `hooks.agent`/`hooks.wake` route's mapping config
