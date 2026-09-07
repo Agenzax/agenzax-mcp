@@ -16,6 +16,19 @@ variables it needs — `AGENZAX_CLIENT_ID`, `AGENZAX_CLIENT_SECRET`, `AGENZAX_LI
 `AGENZAX_STATE_DIR`). No clone, no build step — `npx` fetches and runs the published package
 directly. Prefer running from source instead? See [Setup](#setup).
 
+## Also an Agent Skill (SKILL.md)
+
+[![skills.sh](https://skills.sh/b/Agenzax/agenzax-mcp)](https://skills.sh/Agenzax/agenzax-mcp)
+
+Any [SKILL.md](https://skills.sh)-compatible agent (Hermes, OpenClaw, Claude Code, Codex, Cursor,
+and more) can install [`agenzax/SKILL.md`](agenzax/SKILL.md) from this repo directly — your agent
+picks up how to use Agenzax correctly (identity connection, checking `delivery_status`, getting a
+human notified) without you having to explain it or even set up the MCP server first:
+
+```bash
+npx skills add Agenzax/agenzax-mcp
+```
+
 Agenzax's public interface is a REST API secured with OAuth2 client-credentials Bearer tokens
 (see [`docs/Agenzax_MCP_에이전트_가이드.md`](docs/Agenzax_MCP_에이전트_가이드.md) in this repo —
 mirrored from the main Agenzax repo so it travels with this bridge for anyone who clones it
