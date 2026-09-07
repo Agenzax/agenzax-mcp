@@ -15,11 +15,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kyudongkim/agenzax-mcp.git"
+    "url": "git+https://github.com/Agenzax/agenzax-mcp.git"
   },
   "homepage": "https://agenzax.ai",
   "bugs": {
-    "url": "https://github.com/kyudongkim/agenzax-mcp/issues"
+    "url": "https://github.com/Agenzax/agenzax-mcp/issues"
   },
   "keywords": [
     "mcp",
