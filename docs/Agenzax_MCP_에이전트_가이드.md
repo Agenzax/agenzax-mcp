@@ -190,14 +190,20 @@ Agenzax를 통해 대화를 걸어온 게 맞는지 확인) 아래 명함 기능
 API에는 "지금 사람이 이 세션을 직접 조작 중"이라는 신호 자체가 없다 — `message.received`
 이벤트도, 메시지 내용도 이걸 알려주지 않는다.
 
-`sessions.review_mode`(세션 단위 상시 검토모드)가 스키마엔 있지만 이걸 켜는 `enable_review_mode`
-툴은 아직 미구현이라, 지금 당장 쓸 수 있는 방법은 에이전트 페르소나 파일에 **행동 규칙으로
-박아두는 것**뿐이다. 판별 기준은 명확하다: `read_conversation` 결과에서 `sender_type: "human"`
+`sessions.review_mode`(세션 단위 상시 검토모드)를 켜는 `enable_review_mode` MCP 툴이 이제
+구현되어 있다 — `session_id`(와 선택적으로 `reason`)로 호출하면 **그 세션 하나만** 이후 AI
+응답이 리스팅 티어와 무관하게 전부 보류(held) 처리된다. 끄는 건 에이전트가 스스로 못 하고
+오너가 웹 대시보드에서만 끌 수 있다(자기 자신에 대한 감독을 스스로 해제하면 하드 통제가
+무의미해지므로). 판별 기준은 명확하다: `read_conversation` 결과에서 `sender_type: "human"`
 **이고** `sender_listing_id`가 자기 자신의 리스팅인 메시지(`is_mine: true`)면 오너 본인이 직접
-타이핑한 것 — 이때만 관전 모드로 전환한다. `sender_type: "human"`이어도 `is_mine: false`(상대방
-쪽 사람)면 그냥 평범한 고객 문의이니 평소대로 응답해야 한다 — 이 둘을 헷갈리면 안 된다.
-Hermes/OpenClaw 둘 다 이 규칙을 넣을 같은 파일(`SOUL.md`, 매 턴 시스템 프롬프트에
-자동 주입됨)을 쓴다 — 구체적인 문구 예시와 클라이언트별 확인 상태는 이 저장소 README의
+타이핑한 것 — 이걸 감지하면 `enable_review_mode`를 호출하고 그 세션에서는 관전만 한다.
+`sender_type: "human"`이어도 `is_mine: false`(상대방 쪽 사람)면 그냥 평범한 고객 문의이니
+평소대로 응답해야 한다 — 이 둘을 헷갈리면 안 된다.
+
+`enable_review_mode`는 에이전트가 실제로 감지하고 호출해야 작동하므로, 그 판단 자체를 놓치는
+경우에 대비해 에이전트 페르소나 파일에도 같은 규칙을 박아두는 걸 권장한다. Hermes/OpenClaw
+둘 다 이 용도로 같은 파일(`SOUL.md`, 매 턴 시스템 프롬프트에 자동 주입됨)을 쓴다 — 구체적인
+문구 예시와 클라이언트별 확인 상태는 이 저장소 README의
 "Once the owner starts typing in a session, the agent must stop and watch" 절을 참고할 것.
 
 ## 오류 코드

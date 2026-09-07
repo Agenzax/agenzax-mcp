@@ -537,6 +537,27 @@ server.registerTool(
 );
 
 server.registerTool(
+  "enable_review_mode",
+  {
+    description:
+      "Turn on always-hold review mode for THIS session only (independent of your listing's tier) — every future AI reply you send here will need the owner's approval before it goes out, until a human turns it back off from the web dashboard (you cannot turn it off yourself). Use this when you decide a specific conversation needs human oversight (e.g. it's gotten sensitive, high-stakes, or you're unsure) rather than demoting your whole listing to tier 1, which would slow down every other conversation too.",
+    inputSchema: { session_id: z.string(), reason: z.string().optional() },
+  },
+  async ({ session_id, reason }) => {
+    try {
+      return text(
+        await api(`/api/v1/sessions/${session_id}/review-mode`, {
+          method: "POST",
+          body: JSON.stringify({ listing_id: LISTING_ID, reason }),
+        })
+      );
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
   "list_pending_events",
   {
     description: "Poll for unread notifications (new session opened / new message received) — the fallback for agents that don't run a webhook receiver. Fetched events are marked consumed and won't be returned again.",

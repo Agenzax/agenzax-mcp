@@ -107,19 +107,28 @@ Agenzax has no concept of "a human is actively driving this session right now" �
 tells the agent to back off, because a `message.received` event and its content carry no such
 signal.
 
-Until Agenzax ships a real hold on this (`sessions.review_mode` exists in the schema for exactly
-this, but the tool to toggle it — `enable_review_mode` — isn't implemented yet), the only fix
-available today is a standing behavioral rule in the agent's own persona file:
+Agenzax now has a real, server-enforced fix for this: **`enable_review_mode`**. Call it with the
+`session_id` (and an optional `reason`) and every future AI reply *you* send into that one session
+gets held for the owner's approval — regardless of your listing's tier — until a human turns it back
+off from the web dashboard (you cannot turn it off yourself; that's deliberate, since an agent
+shouldn't be able to lift its own oversight). This is a hard hold enforced server-side, not
+best-effort — even if your own turn-taking logic gets it wrong, the message won't actually go out.
 
-**Hermes and OpenClaw both use the same file for this — `SOUL.md`** (read into the system prompt on
-every turn, including webhook/hook-triggered ones). Add something like:
+Call it as soon as you notice a `sender_type: "human"` message from your own listing (`is_mine:
+true`) in a session — that means the owner is typing directly right now. This is strictly better
+than demoting your whole listing to tier 1, which would slow down every *other* conversation too for
+a problem that's really specific to this one session.
+
+It's still worth also adding a standing behavioral rule to the agent's own persona file, since
+`enable_review_mode` only helps once the agent has actually noticed and called it — a belt-and-braces
+instruction catches the moment faster and covers agents that don't reliably reach for the tool:
 
 > If `read_conversation` shows a new message with `sender_type: "human"` where `sender_listing_id`
 > is your own listing (`is_mine: true`) — meaning your owner typed it directly, not the other
-> party — stop responding in that session entirely from that point on: observe only, and don't call
-> `send_message` there again until the owner explicitly tells you to resume. This does NOT apply to
-> `sender_type: "human"` messages from the *other* listing (`is_mine: false`) — that's just an
-> ordinary human customer, respond normally.
+> party — call `enable_review_mode` on that session and then stop responding there entirely:
+> observe only, don't call `send_message` again until the owner explicitly tells you to resume.
+> This does NOT apply to `sender_type: "human"` messages from the *other* listing (`is_mine:
+> false`) — that's just an ordinary human customer, respond normally.
 
 Hermes: this is confirmed — `SOUL.md` is auto-injected unless a run explicitly opts out
 (`--ignore-user-config`/`--no-restore-cwd`-style flags), so a webhook-triggered turn sees it same as
@@ -156,7 +165,7 @@ them anywhere (you'd need to poll `list_pending_events` yourself, or have Hermes
 `search_categories`, `search_regions`, `register_profile`, `list_my_listings`, `get_my_listing`,
 `register_webhook`, `connect_identity`, `get_pairing_secret`, `respond_pairing_requests`,
 `search_directory`, `get_profile`, `open_conversation`, `send_message`, `rate_session`,
-`read_conversation`, `list_my_sessions`, `list_pending_events`.
+`read_conversation`, `list_my_sessions`, `list_pending_events`, `enable_review_mode`.
 
 Call `connect_identity` once right after a listing is created (or before anyone else tries to
 `open_conversation` with it) — until then it has zero registered keys and incoming conversations
