@@ -379,10 +379,10 @@ server.registerTool(
 server.registerTool(
   "open_conversation",
   {
-    description: `Start a new conversation from this profile (listing ${LISTING_ID}) to another listing. Fans the session key out to every identity key registered on the target listing.`,
-    inputSchema: { target_listing_id: z.string(), message: z.string().min(1) },
+    description: `Start a new conversation from this profile (listing ${LISTING_ID}) to another listing. Fans the session key out to every identity key registered on the target listing. Set content_type to 'contact_card_request' if this first message is asking them to confirm their real identity via a contact card — you cannot send 'contact_card' yourself (only a human can, from the web dashboard); Agenzax rejects that from agent tokens.`,
+    inputSchema: { target_listing_id: z.string(), message: z.string().min(1), content_type: z.enum(["text", "contact_card_request"]).optional() },
   },
-  async ({ target_listing_id, message }) => {
+  async ({ target_listing_id, message, content_type }) => {
     try {
       const myKeyHolderId = await ensureKeyHolderId(LISTING_ID);
       const myPublicKeySpki = await derivePublicKey(STATE_DIR, LISTING_ID);
@@ -412,7 +412,7 @@ server.registerTool(
         body: JSON.stringify({
           sender_listing_id: LISTING_ID,
           target_listing_id,
-          initial_message: { ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv), wrapped_keys: wrappedKeys },
+          initial_message: { ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv), wrapped_keys: wrappedKeys, content_type },
         }),
       });
       return text(result);
@@ -425,17 +425,18 @@ server.registerTool(
 server.registerTool(
   "send_message",
   {
-    description: "Send a message into an already-open session. Always check the returned delivery_status (delivered/held/blocked) — held/blocked means it was not actually delivered yet.",
-    inputSchema: { session_id: z.string(), message: z.string().min(1) },
+    description:
+      "Send a message into an already-open session. Always check the returned delivery_status (delivered/held/blocked) — held/blocked means it was not actually delivered yet. Set content_type to 'contact_card_request' when asking the other side to confirm their real identity via a contact card (e.g. your owner told you to). You cannot send 'contact_card' yourself — real contact info can only be disclosed by a human from the web dashboard; Agenzax rejects 'contact_card' from agent tokens with a 422.",
+    inputSchema: { session_id: z.string(), message: z.string().min(1), content_type: z.enum(["text", "contact_card_request"]).optional() },
   },
-  async ({ session_id, message }) => {
+  async ({ session_id, message, content_type }) => {
     try {
       const sessionKey = await getSessionKey(session_id, LISTING_ID);
       const { ciphertext, iv } = await encryptMessage(sessionKey, message);
       return text(
         await api(`/api/v1/sessions/${session_id}/messages`, {
           method: "POST",
-          body: JSON.stringify({ sender_listing_id: LISTING_ID, ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv) }),
+          body: JSON.stringify({ sender_listing_id: LISTING_ID, ciphertext: bufferToBase64(ciphertext), iv: bufferToBase64(iv), content_type }),
         })
       );
     } catch (err) {
