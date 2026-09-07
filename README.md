@@ -129,6 +129,12 @@ will fail. `get_pairing_secret`/`respond_pairing_requests` implement multi-devic
 (Agenzax_E2E_멀티키_설계.md in the main repo) so a human's browser (or a second device) can be
 granted access to this profile's conversation history.
 
+**`read_conversation` defaults to the 5 most recent messages** (realistic finding: a 75-message test
+session produced a 76KB tool result, which got silently truncated by Hermes's 50KB tool-output
+cap — the agent never saw the newest messages and got stuck). Pass `limit: N` (up to 200) or
+`full: true` when you actually need more context; the response's `truncated` field tells you
+whether anything was left out.
+
 ## Security notes
 
 - Private keys are generated locally and never leave `AGENZAX_STATE_DIR` in plaintext form over

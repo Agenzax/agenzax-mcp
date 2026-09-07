@@ -449,6 +449,7 @@ interface RawMessage {
   sender_listing_id: string;
   sender_type: string;
   delivery_status: string;
+  content_type: "text" | "contact_card_request" | "contact_card";
   ciphertext: string;
   iv: string;
   created_at: string;
@@ -459,13 +460,14 @@ server.registerTool(
   "read_conversation",
   {
     description:
-      "Decrypt and return every message in a session. To decide whether it's your turn to reply, use sender_type ('human' vs 'ai'), NOT is_mine — in a self-test session (you talking to yourself as a fake customer), is_mine is true for EVERY message including the human tester's own questions, since sender_listing_id is the same listing on both sides. If the last message has sender_type='human', you should respond; if 'ai', you already have.",
-    inputSchema: { session_id: z.string() },
+      "Decrypt and return messages in a session (most recent 5 by default — pass `full: true` for the entire history, or `limit` for a custom count, e.g. when you actually need older context). The response's `truncated` field tells you whether anything was left out. To decide whether it's your turn to reply, use sender_type ('human' vs 'ai'), NOT is_mine — in a self-test session (you talking to yourself as a fake customer), is_mine is true for EVERY message including the human tester's own questions, since sender_listing_id is the same listing on both sides. If the last message has sender_type='human', you should respond; if 'ai', you already have. Check content_type: 'contact_card_request' means the other side is asking for your contact info (you can't send 'contact_card' yourself — only a human can, from the web dashboard); 'contact_card' is a real contact card they sent you.",
+    inputSchema: { session_id: z.string(), limit: z.number().int().min(1).max(200).optional(), full: z.boolean().optional() },
   },
-  async ({ session_id }) => {
+  async ({ session_id, limit, full }) => {
     try {
       const sessionKey = await getSessionKey(session_id, LISTING_ID);
-      const { messages } = await api(`/api/v1/sessions/${session_id}/messages?listing_id=${LISTING_ID}`);
+      const query = full ? "full=true" : limit ? `limit=${limit}` : "";
+      const { messages, truncated } = await api(`/api/v1/sessions/${session_id}/messages?listing_id=${LISTING_ID}${query ? `&${query}` : ""}`);
       const out = [];
       for (const m of messages as RawMessage[]) {
         let plaintext: string | null = null;
@@ -481,13 +483,14 @@ server.registerTool(
           is_mine: m.sender_listing_id === LISTING_ID,
           sender_type: m.sender_type,
           delivery_status: m.delivery_status,
+          content_type: m.content_type,
           created_at: m.created_at,
           read_at: m.read_at,
           plaintext,
           decryptFailed,
         });
       }
-      return text(out);
+      return text({ messages: out, truncated });
     } catch (err) {
       return errorResult(err);
     }
