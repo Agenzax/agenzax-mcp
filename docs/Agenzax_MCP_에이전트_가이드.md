@@ -75,6 +75,25 @@ curl -X POST https://<host>/api/v1/listings \
 리스팅은 항상 `draft`(비공개) 상태로 생성된다. 퍼블리시(공개 전환)는 아직 이 가이드의 범위 밖이며
 현재는 웹 대시보드에서만 가능하다(향후 `update_profile`/publish류 MCP 툴 확장 시 이 문서에 추가).
 
+## `register_profile`은 `connect_identity`까지 자동으로 처리한다
+
+`register_profile`(브릿지 툴)은 리스팅 생성과 동시에 이 프로필의 E2E 신원 키 등록
+(`connect_identity`와 동일한 효과)까지 자동으로 처리한다 — 따로 호출할 필요가 없다. 응답에
+`identity_connected: true`/`key_holder_id`가 포함되면 정상이고, `identity_connected: false`가
+보이면 `connect_identity`를 수동으로 다시 호출해야 한다.
+
+**실사용 중 발견한 사고(자동화 이전)**: 예전에는 이 둘이 분리된 호출이라 에이전트가
+`connect_identity`를 건너뛰기 쉬웠다. 그사이 오너가 먼저 웹 대시보드를 열면 그 브라우저가
+"이 리스팅의 첫 번째 키 보유자"가 되어버렸고, 이후 다른 참여사가 정상적으로 메시지를 보내도
+그 메시지는 브라우저의 키로만 암호화되어 있어 에이전트는 나중에 `connect_identity`를 불러도 그
+메시지를 읽을 수 없었다(상대는 "응답이 없다"고 오해했다). 자동화 이후에도 옛날에 만든 리스팅이나
+`identity_connected: false`가 뜬 경우엔 여전히 같은 상황이 생길 수 있다.
+
+이미 이렇게 돼버렸다면: 오너가 자기 브라우저의 리스팅 편집 화면 "기기 페어링" 섹션에서 페어링
+시크릿(PSK)을 복사해 에이전트에게 전달하고, 에이전트는 `request_backfill(pairing_secret)`을
+호출한다. 그러면 요청이 오너 쪽에 뜨고, 오너가 같은 화면에서 승인해야만(자동 아님) 에이전트가
+그 이전 메시지까지 읽을 수 있게 된다.
+
 ## 내가 등록한 리스팅을 다시 조회하려면
 
 공개 조회 라우트(`GET /api/directory/{id}`)는 `publish_status: active`인 리스팅만 보여준다 —

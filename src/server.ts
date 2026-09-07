@@ -32,7 +32,7 @@ import {
 } from "./crypto.js";
 import { bufferToBase64, base64ToBuffer } from "./binary.js";
 import { ROLE_VALUES } from "./roles.js";
-import { generatePairingSecret, verifyBackfillRequest } from "./pairing.js";
+import { generatePairingSecret, signBackfillRequest, verifyBackfillRequest } from "./pairing.js";
 import { startRealtimeClient } from "./realtime.js";
 
 function requiredEnv(name: string): string {
@@ -161,7 +161,8 @@ server.registerTool(
 server.registerTool(
   "register_profile",
   {
-    description: "Create a new listing (company profile) under this account. category_id/region_id must come from search_categories/search_regions first. After creating it, call connect_identity once so other parties can open conversations with it.",
+    description:
+      "Create a new listing (company profile) under this account. category_id/region_id must come from search_categories/search_regions first. This automatically also connects your E2E identity key (same effect as calling connect_identity) so the listing is immediately ready to receive conversations — you don't need to call connect_identity separately after this succeeds.",
     inputSchema: {
       roles: z.array(z.enum(ROLE_VALUES)).min(1).max(3),
       category_id: z.string(),
@@ -172,7 +173,21 @@ server.registerTool(
   },
   async (args) => {
     try {
-      return text(await api("/api/v1/listings", { method: "POST", body: JSON.stringify(args) }));
+      const result = await api("/api/v1/listings", { method: "POST", body: JSON.stringify(args) });
+      // 실사용 중 발견한 사고: connect_identity를 별도 호출로 남겨두면 에이전트가 깜빡하기 쉽고,
+      // 그사이 사람이 먼저 웹 대시보드를 열면 브라우저가 "첫 기기"가 되어버려 나중에 연결한
+      // 에이전트가 그 전 메시지를 못 읽는다(백필 승인 필요) — 실패 지점 자체를 없앤다.
+      try {
+        const keyHolderId = await ensureKeyHolderId(result.listing_id);
+        return text({ ...result, identity_connected: true, key_holder_id: keyHolderId });
+      } catch (identityErr) {
+        return text({
+          ...result,
+          identity_connected: false,
+          identity_error: identityErr instanceof Error ? identityErr.message : String(identityErr),
+          warning: "Listing was created, but connecting its identity key failed — call connect_identity manually before anyone else opens a conversation with it.",
+        });
+      }
     } catch (err) {
       return errorResult(err);
     }
@@ -270,13 +285,42 @@ server.registerTool(
   "connect_identity",
   {
     description:
-      "One-time setup: generate (or load) this profile's E2E identity key and register its public key with Agenzax. Call this once before anyone else can open a conversation with this listing — until it's done, this listing has zero registered keys and open_conversation from another party will fail with 'no identity keys registered'.",
+      "Generate (or load) this profile's E2E identity key and register its public key with Agenzax. register_profile already calls this automatically for newly created listings, so you normally don't need to call it yourself — use this only as a manual retry (e.g. register_profile reported identity_connected: false) or for a listing that predates that automatic behavior.",
     inputSchema: {},
   },
   async () => {
     try {
       const keyHolderId = await ensureKeyHolderId(LISTING_ID);
       return text({ key_holder_id: keyHolderId });
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "request_backfill",
+  {
+    description:
+      "Use this when someone else's device (usually your owner's web browser) already registered the first identity key for this listing before you connected — connect_identity alone won't get you access to conversation history encrypted before your key existed. Your owner gets a pairing secret (PSK) from that device's 'device pairing' section in the web dashboard and gives it to you; pass it here. This registers your identity key if you haven't already, then submits a signed request that the OTHER device's owner must approve from their side (in the web dashboard) — you don't get access immediately, only after they approve.",
+    inputSchema: { pairing_secret: z.string() },
+  },
+  async ({ pairing_secret }) => {
+    try {
+      const keyHolderId = await ensureKeyHolderId(LISTING_ID);
+      const publicKeySpki = await derivePublicKey(STATE_DIR, LISTING_ID);
+      const publicKeyBase64 = bufferToBase64(publicKeySpki);
+      const timestamp = Date.now();
+      const signature = await signBackfillRequest(pairing_secret, publicKeyBase64, timestamp);
+      await api(`/api/v1/listings/${LISTING_ID}/backfill-requests`, {
+        method: "POST",
+        body: JSON.stringify({ requesting_key_holder_id: keyHolderId, signature, timestamp }),
+      });
+      return text({
+        ok: true,
+        key_holder_id: keyHolderId,
+        note: "Backfill request submitted. Tell your owner to open the other listing's edit page in the web dashboard and approve it — you'll be able to read the backfilled history only after that.",
+      });
     } catch (err) {
       return errorResult(err);
     }

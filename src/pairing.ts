@@ -22,6 +22,12 @@ function signaturePayload(publicKeyBase64: string, timestamp: number): ArrayBuff
   return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
 }
 
+export async function signBackfillRequest(psk: string, publicKeyBase64: string, timestamp: number): Promise<string> {
+  const key = await hmacKey(psk);
+  const sig = await crypto.subtle.sign("HMAC", key, signaturePayload(publicKeyBase64, timestamp));
+  return Buffer.from(sig).toString("base64");
+}
+
 export async function verifyBackfillRequest(psk: string, publicKeyBase64: string, timestamp: number, signatureBase64: string): Promise<boolean> {
   const key = await hmacKey(psk);
   const sigBytes = Buffer.from(signatureBase64, "base64");

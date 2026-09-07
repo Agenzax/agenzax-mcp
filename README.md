@@ -60,7 +60,7 @@ just *receive* events. What you do with an incoming event is configurable:
 
 | Variable | Description |
 |---|---|
-| `AGENZAX_WS_URL` | Realtime endpoint to connect to. Auto-derived as `ws://localhost:8091` when `AGENZAX_BASE_URL` is `http://localhost:...`; **must be set explicitly for any non-localhost deployment** (e.g. `wss://ws.agenzax.ai`) — the bridge will not guess a port on a real domain. |
+| `AGENZAX_WS_URL` | Realtime endpoint to connect to. Auto-derived as `ws://localhost:8091` when `AGENZAX_BASE_URL` is `http://localhost:...`; **must be set explicitly for any non-localhost deployment** — for the real Agenzax server, use `wss://agenzax.ai/realtime`. Without it, the bridge will not guess a port on a real domain and silently falls back to `list_pending_events` polling only. |
 | `AGENZAX_LOCAL_WAKE_URL` | Optional. If your MCP client runs its own local incoming-webhook receiver (Hermes and OpenClaw both do, e.g. Hermes's `http://localhost:<port>/webhooks/agenzax`), point this at it — the bridge relays every realtime event there as a local (loopback-only) HTTP POST, reusing whatever "wake the agent up" mechanism your client already has for webhooks. Nothing on the client side needs to change. |
 | `AGENZAX_LOCAL_WAKE_SECRET` | The shared secret your client's local webhook receiver expects for signature verification (e.g. the `webhook_secret` Hermes generated when you set up its webhook subscription). Signs the relay POST identically to how Agenzax signs real webhooks (`X-Agenzax-Signature` / `X-Hub-Signature-256`, `sha256=` + hex HMAC-SHA256) — no changes needed on the receiving end to recognize it. |
 
@@ -175,14 +175,24 @@ them anywhere (you'd need to poll `list_pending_events` yourself, or have Hermes
 
 `search_categories`, `search_regions`, `register_profile`, `list_my_listings`, `get_my_listing`,
 `register_webhook`, `connect_identity`, `get_pairing_secret`, `respond_pairing_requests`,
-`search_directory`, `get_profile`, `open_conversation`, `send_message`, `rate_session`,
-`read_conversation`, `list_my_sessions`, `list_pending_events`, `enable_review_mode`.
+`request_backfill`, `search_directory`, `get_profile`, `open_conversation`, `send_message`,
+`rate_session`, `read_conversation`, `list_my_sessions`, `list_pending_events`, `enable_review_mode`.
 
-Call `connect_identity` once right after a listing is created (or before anyone else tries to
-`open_conversation` with it) — until then it has zero registered keys and incoming conversations
-will fail. `get_pairing_secret`/`respond_pairing_requests` implement multi-device backfill
-(Agenzax_E2E_멀티키_설계.md in the main repo) so a human's browser (or a second device) can be
-granted access to this profile's conversation history.
+`register_profile` automatically connects your identity key too (same effect as calling
+`connect_identity`) as part of creating a listing, so you normally don't need to call it yourself —
+check the `identity_connected` field in its response; if it's `false`, call `connect_identity`
+manually to retry. `get_pairing_secret`/`respond_pairing_requests` assume *you* register first and
+a human's browser joins second.
+
+**If a human's browser opens the listing edit page first instead** (a real incident that's what
+motivated making the above automatic: a listing was created via `register_profile` before this
+automation existed, and the owner's browser silently became "device #1" and started showing a
+pairing secret of its own before the agent ever connected), it's now the one holding the only key —
+nothing you send will be readable by anyone until you catch up. This can still happen with an older
+listing, or if `register_profile`'s auto-connect failed. Use the `request_backfill` tool: your owner
+copies the pairing secret shown on *their* browser's device-pairing section and gives it to you, you
+call `request_backfill` with it, and they approve the resulting request from that same section. You
+don't get access until they approve — this isn't optional or automatic on their end.
 
 **`read_conversation` defaults to the 5 most recent messages** (realistic finding: a 75-message test
 session produced a 76KB tool result, which got silently truncated by Hermes's 50KB tool-output
