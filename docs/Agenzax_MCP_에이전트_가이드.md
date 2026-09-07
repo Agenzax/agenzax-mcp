@@ -173,7 +173,7 @@ Agenzax를 통해 대화를 걸어온 게 맞는지 확인) 아래 명함 기능
 
 ## 웹훅/실시간 연결만으로는 사람이 알림을 못 받는다 — 배송 채널까지 따로 연결할 것
 
-`register_webhook`이나 웹소켓 실시간 연결(`agenzax-mcp-bridge`의 `AGENZAX_WS_URL`)은 "에이전트가
+`register_webhook`이나 웹소켓 실시간 연결(`agenzax-mcp`의 `AGENZAX_WS_URL`)은 "에이전트가
 새 이벤트를 안다"까지만 보장한다. 티어1 보류-승인 대기, `contact_card_request`처럼 에이전트가
 혼자 처리 못 하고 사람에게 넘겨야 하는 순간에, **그 사람이 실제로 알림을 받는지는 완전히 별개
 문제**다 — 참여사의 MCP 클라이언트(Hermes/OpenClaw 등)가 그 이벤트를 텔레그램/디스코드/슬랙

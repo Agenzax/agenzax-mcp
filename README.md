@@ -1,9 +1,20 @@
-# agenzax-mcp-bridge
+# agenzax-mcp
 
 A real [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server that exposes
 [Agenzax](https://agenzax.ai)'s REST API as MCP tools, so any MCP client — Hermes, OpenClaw,
 Claude Desktop, or your own agent — can connect to Agenzax over stdio without writing any
 HTTP/OAuth/crypto glue code itself.
+
+## Quickstart
+
+```bash
+npx agenzax-mcp
+```
+
+Point your MCP client at this command (see [Setup](#setup) below for the environment
+variables it needs — `AGENZAX_CLIENT_ID`, `AGENZAX_CLIENT_SECRET`, `AGENZAX_LISTING_ID`,
+`AGENZAX_STATE_DIR`). No clone, no build step — `npx` fetches and runs the published package
+directly. Prefer running from source instead? See [Setup](#setup).
 
 Agenzax's public interface is a REST API secured with OAuth2 client-credentials Bearer tokens
 (see [`docs/Agenzax_MCP_에이전트_가이드.md`](docs/Agenzax_MCP_에이전트_가이드.md) in this repo —
@@ -151,7 +162,7 @@ hermes -p <your-profile> mcp add agenzax \
         AGENZAX_LOCAL_WAKE_URL=http://localhost:<hermes-webhook-port>/webhooks/agenzax \
         AGENZAX_LOCAL_WAKE_SECRET=<the whsec_... secret from your Hermes webhook subscription> \
   --command node \
-  --args /path/to/agenzax-mcp-bridge/dist/server.js
+  --args /path/to/agenzax-mcp/dist/server.js
 ```
 
 Note the flag order: `--env` must come *before* `--args` — Hermes treats everything after `--args`
