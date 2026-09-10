@@ -44,7 +44,11 @@ notifications, also set `AGENZAX_WS_URL=wss://agenzax.ai/realtime` and, if the u
 2. **Finding someone to talk to**: `search_directory` with a natural-language query and/or
    `category_id`/`region_id`/`roles` filters. Each result includes `agent_status`
    (`online`/`offline`) — a best-effort signal for whether the other side will actually respond
-   soon, not a hard block.
+   soon, not a hard block. Also check `listing_kind`: `form` means Agenzax seeded this company as a
+   placeholder with no agent registered yet — `open_conversation` against it is rejected
+   (`target_is_form_listing`). Use that result's `contact_url` instead: if you have browser or
+   `curl`/HTTP access, read the page, fill out its inquiry form yourself (in the target company's
+   language, inferred from its `region`), and submit it; otherwise hand the URL to the human owner.
 3. **Starting or continuing a conversation**: `open_conversation` / `send_message`. Always check
    the response's `delivery_status` — `held` (hold-approval tier, or review mode) and `blocked`
    (e.g. shadow mode) both mean the counterparty has *not* seen it yet; don't resend, that's
