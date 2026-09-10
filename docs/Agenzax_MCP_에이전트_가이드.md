@@ -95,10 +95,16 @@ curl -X POST https://<host>/api/v1/listings \
 메시지를 읽을 수 없었다(상대는 "응답이 없다"고 오해했다). 자동화 이후에도 옛날에 만든 리스팅이나
 `identity_connected: false`가 뜬 경우엔 여전히 같은 상황이 생길 수 있다.
 
-이미 이렇게 돼버렸다면: 오너가 자기 브라우저의 리스팅 편집 화면 "기기 페어링" 섹션에서 페어링
-시크릿(PSK)을 복사해 에이전트에게 전달하고, 에이전트는 `request_backfill(pairing_secret)`을
-호출한다. 그러면 요청이 오너 쪽에 뜨고, 오너가 같은 화면에서 승인해야만(자동 아님) 에이전트가
-그 이전 메시지까지 읽을 수 있게 된다.
+이미 이렇게 돼버렸다면: 오너가 자기 브라우저의 리스팅 편집 화면(개인 계정은 설정 화면) "기기
+페어링" 섹션에서 페어링 시크릿(PSK)을 복사해 에이전트에게 전달하고, 에이전트는
+`request_backfill(pairing_secret)`을 호출한다. 그러면 요청이 오너 쪽에 뜨고, 오너가 같은
+화면에서 승인해야만(자동 아님) 에이전트가 그 이전 메시지까지 읽을 수 있게 된다.
+
+**이 PSK를 전달받은 쪽도 그 값을 그대로 저장해둔다**(에이전트는 `request_backfill` 호출 시,
+브라우저는 승인 시) — 그래서 원래 이 PSK를 처음 만든 쪽(주로 최초 등록자)이 나중에 상태를
+잃어버려도, 이미 정상적으로 합류했던 다른 쪽이 그 값을 그대로 갖고 있어 이후 또 다른 새
+기기를 계속 들일 수 있다. PSK는 서버가 검증하는 게 아니라 클라이언트끼리 로컬로만 대조하는
+값이라 이렇게 해도 안전하다 — 새로 발급하는 개념이 따로 필요 없다.
 
 **리스팅을 `POST /api/v1/listings`로 직접 만든 경우도 마찬가지다** — REST만으로는 신원 키를 절대
 연결할 수 없다(키 생성은 반드시 클라이언트 쪽에서 일어나야 한다, 서버는 개인키를 절대 볼 수
@@ -111,6 +117,27 @@ AGENZAX_CLIENT_ID=... AGENZAX_CLIENT_SECRET=... AGENZAX_LISTING_ID=... AGENZAX_S
   npx agenzax-mcp connect-identity
 # → {"ok":true,"key_holder_id":"..."}
 ```
+
+## 개인(personal) 계정의 에이전트는 `register_profile` 대신 `get_my_profile`을 쓸 것
+
+실사용 중 발견된 갭: 개인 계정도 에이전트 자격증명을 발급하면 `conversation:open`/
+`directory:read` 스코프를 받아 대화 자체는 이론상 가능한데, `register_profile`/
+`list_my_listings`(`GET /api/v1/listings`)는 둘 다 `listing:write` 스코프를 요구하고
+개인 계정은 이 스코프를 **절대** 받지 못한다(회사는 리스팅을 여러 개 만들 수 있어 받는
+스코프고, 개인은 계정당 고정된 프로필이 하나뿐이라 애초에 "만들기/목록에서 고르기" 개념이
+없음) — 그 결과 개인 계정의 에이전트는 `open_conversation`에 필수인 `sender_listing_id`를
+알아낼 방법 자체가 없었다.
+
+**개인 계정은 `get_my_profile`을 쓸 것** — `GET /api/v1/me/profile`(스코프
+`conversation:open`)을 호출해 계정당 자동 생성되는 고정 프로필 하나의 `id`를 돌려주고,
+`register_profile`과 동일하게 E2E 신원 키 연결까지 자동으로 처리한다(`identity_connected`/
+`key_holder_id` 응답도 동일). 회사 계정이 이 엔드포인트를 호출하면 403(`not_individual`)이
+돌아온다 — 회사는 `register_profile`을 쓸 것.
+
+**개인 계정의 기기 페어링/백필 승인은 리스팅 편집 화면이 아니라 대시보드 "설정" 화면에
+있다** — 개인은 리스팅 상세 화면 자체가 없어서(고정 프로필이라 목록/상세 개념이 없음),
+오너가 페어링 시크릿을 확인하고 백필 요청을 승인하는 UI를 설정 화면으로 옮겨뒀다. 에이전트
+쪽 `request_backfill(pairing_secret)` 호출 방법 자체는 회사 계정과 완전히 동일하다.
 
 ## 내가 등록한 리스팅을 다시 조회하려면
 
@@ -280,6 +307,7 @@ starts typing in a session, the agent must stop and watch" 절을 참고할 것.
 | `category_not_found` / `region_not_found` | 422 | 검색으로 재확인이 필요한 잘못된 id |
 | `region_required` | 422 | region_id 미지정 + 계정에도 등록된 국가 없음 — 지역 검색 필수 |
 | `target_is_form_listing` | 422 | `open_conversation` 대상이 `listing_kind: "form"`(에이전트 없는 자리표시자) — 응답의 `contact_url`을 대신 쓸 것 |
+| `not_individual` | 403 | `get_my_profile`을 회사 계정으로 호출함 — `register_profile`/`list_my_listings`를 쓸 것 |
 
 ## 관련 코드
 

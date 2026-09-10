@@ -178,7 +178,7 @@ server.registerTool(
   "register_profile",
   {
     description:
-      "Create a new listing (company profile) under this account. category_id/region_id must come from search_categories/search_regions first. This automatically also connects your E2E identity key (same effect as calling connect_identity) so the listing is immediately ready to receive conversations — you don't need to call connect_identity separately after this succeeds.",
+      "Create a new listing (company profile) under this account. Requires a company account — individual accounts get a 403 (they don't create/list listings, they have one fixed profile; call get_my_profile instead). category_id/region_id must come from search_categories/search_regions first. This automatically also connects your E2E identity key (same effect as calling connect_identity) so the listing is immediately ready to receive conversations — you don't need to call connect_identity separately after this succeeds.",
     inputSchema: {
       roles: z.array(z.enum(ROLE_VALUES)).min(1).max(3),
       category_id: z.string(),
@@ -223,10 +223,44 @@ server.registerTool(
 );
 
 server.registerTool(
+  "get_my_profile",
+  {
+    description:
+      "For individual (personal) accounts only — register_profile/list_my_listings don't work for you (they require a scope only company accounts get, since a company can own several listings but an individual always has exactly one fixed profile with no create/list step needed). Call this instead: it returns your one profile's id and auto-connects its E2E identity key (same effect as connect_identity), so you're immediately ready to use it as sender_listing_id in open_conversation. Company accounts get a 403 from this — use register_profile there.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const result = (await api("/api/v1/me/profile")) as { profile: { id: string; one_liner: string | null } };
+      const boundNewListing = !LISTING_ID;
+      if (boundNewListing) LISTING_ID = result.profile.id;
+      const bindingNote = boundNewListing
+        ? " This server had no AGENZAX_LISTING_ID set, so it's now using this profile for the rest of this session — no restart needed. To keep using it after a restart, save AGENZAX_LISTING_ID=" +
+          result.profile.id +
+          " in this profile's config."
+        : "";
+      try {
+        const keyHolderId = await ensureKeyHolderId(result.profile.id);
+        return text({ ...result, identity_connected: true, key_holder_id: keyHolderId, note: bindingNote || undefined });
+      } catch (identityErr) {
+        return text({
+          ...result,
+          identity_connected: false,
+          identity_error: identityErr instanceof Error ? identityErr.message : String(identityErr),
+          warning: "Found your profile, but connecting its identity key failed — call connect_identity manually before anyone else opens a conversation with it." + bindingNote,
+        });
+      }
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
   "list_my_listings",
   {
     description:
-      "List every listing (profile) registered under this account, including drafts. The public get_profile/directory tools only show published (active) listings, so a freshly-registered draft profile won't show up there — use this instead.",
+      "For company accounts — list every listing (profile) registered under this account, including drafts. The public get_profile/directory tools only show published (active) listings, so a freshly-registered draft profile won't show up there — use this instead. Individual accounts get a 403 from the underlying endpoint — use get_my_profile instead, you only ever have one fixed profile.",
     inputSchema: {},
   },
   async () => {
@@ -332,7 +366,7 @@ server.registerTool(
   "request_backfill",
   {
     description:
-      "Use this when someone else's device (usually your owner's web browser) already registered the first identity key for this listing before you connected — connect_identity alone won't get you access to conversation history encrypted before your key existed. Your owner gets a pairing secret (PSK) from that device's 'device pairing' section in the web dashboard and gives it to you; pass it here. This registers your identity key if you haven't already, then submits a signed request that the OTHER device's owner must approve from their side (in the web dashboard) — you don't get access immediately, only after they approve.",
+      "Use this when someone else's device (usually your owner's web browser) already registered the first identity key for this listing before you connected — connect_identity alone won't get you access to conversation history encrypted before your key existed. Your owner gets a pairing secret (PSK) from that device's 'device pairing' section in the web dashboard and gives it to you; pass it here. This registers your identity key if you haven't already, then submits a signed request that the OTHER device's owner must approve from their side (in the web dashboard) — you don't get access immediately, only after they approve. This PSK is also saved locally once it works, so this process can itself later approve a third device with respond_pairing_requests, even if whoever originally generated it is gone.",
     inputSchema: { pairing_secret: z.string() },
   },
   async ({ pairing_secret }) => {
@@ -346,6 +380,11 @@ server.registerTool(
         method: "POST",
         body: JSON.stringify({ requesting_key_holder_id: keyHolderId, signature, timestamp }),
       });
+      // 실사용 중 발견된 갭 수정: 전달받은 PSK를 쓰고 버리면, 이 값을 처음 만든 쪽(주로 오너의
+      // 브라우저)이 나중에 상태를 잃어도 이 에이전트가 이후 다른 기기를 들일 방법이 없었다.
+      // PSK는 서버가 검증하는 게 아니라 로컬 대조용이라(get_pairing_secret과 동일한 파일에)
+      // 저장해두면, 이 프로세스도 이후 respond_pairing_requests로 승인자 역할을 할 수 있다.
+      if (!existsSync(pskPath(requireListingId()))) writeFileSync(pskPath(requireListingId()), pairing_secret);
       return text({
         ok: true,
         key_holder_id: keyHolderId,
