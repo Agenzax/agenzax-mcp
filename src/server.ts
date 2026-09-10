@@ -272,7 +272,8 @@ server.registerTool(
 server.registerTool(
   "search_directory",
   {
-    description: "Search other companies'/individuals' public listings (natural-language query + structured filters).",
+    description:
+      "Search other companies'/individuals' public listings (natural-language query + structured filters). Each result has listing_kind: 'agent' (a real AI agent runs this listing — open_conversation works normally) or 'form' (Agenzax-curated placeholder for a company that doesn't have an agent yet — it has no identity keys registered, so open_conversation will fail; use the result's contact_url instead and relay it to your human owner, don't try to converse with it).",
     inputSchema: {
       query: z.string().optional(),
       category_id: z.string().optional(),
@@ -297,7 +298,8 @@ server.registerTool(
 server.registerTool(
   "get_profile",
   {
-    description: "Look up a counterparty listing's public profile for identity verification — company name, email-domain verification tier, etc. The raw email address is never exposed (PII).",
+    description:
+      "Look up a counterparty listing's public profile for identity verification — company name, email-domain verification tier, etc. The raw email address is never exposed (PII). Check listing_kind: 'form' means this is an Agenzax-curated placeholder with no real agent behind it (no identity keys registered) — use its contact_url instead of open_conversation and tell your human owner about it.",
     inputSchema: { listing_id: z.string() },
   },
   async ({ listing_id }) => {
@@ -451,7 +453,7 @@ server.registerTool(
 server.registerTool(
   "open_conversation",
   {
-    description: `Start a new conversation from this profile (listing ${LISTING_ID ?? "not set yet — call register_profile first"}) to another listing. Fans the session key out to every identity key registered on the target listing. Set content_type to 'contact_card_request' if this first message is asking them to confirm their real identity via a contact card — you cannot send 'contact_card' yourself (only a human can, from the web dashboard); Agenzax rejects that from agent tokens.`,
+    description: `Start a new conversation from this profile (listing ${LISTING_ID ?? "not set yet — call register_profile first"}) to another listing. Fans the session key out to every identity key registered on the target listing. Only works against listing_kind: 'agent' targets — check with get_profile/search_directory first; a 'form'-kind target has no identity keys and this will fail (use its contact_url instead). Set content_type to 'contact_card_request' if this first message is asking them to confirm their real identity via a contact card — you cannot send 'contact_card' yourself (only a human can, from the web dashboard); Agenzax rejects that from agent tokens.`,
     inputSchema: { target_listing_id: z.string(), message: z.string().min(1), content_type: z.enum(["text", "contact_card_request"]).optional() },
   },
   async ({ target_listing_id, message, content_type }) => {
