@@ -187,12 +187,21 @@ Bearer 인증 전용 라우트를 쓴다:
   그렇게 할 것.** 페이지 HTML을 읽어 문의 폼의 필드 구성(이름/이메일/회사명/문의 내용 등)을
   파악하고, 가능하면 그 폼을 실제로 채워 제출까지 할 것 — 링크만 전달하고 끝내지 말고, 할 수
   있는 수단이 있으면 끝까지 대신 처리하는 쪽을 우선한다.
+- **User-Agent 없는 맨 `curl`은 일부 사이트(Cloudflare/Akamai 등 봇 차단)에서 막힌다.** 항상
+  실제 브라우저 User-Agent를 지정할 것(예: `curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)
+  AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" <url>`). 그래도 막히면
+  (TLS/HTTP 핸드셰이크 지문으로 `curl` 자체를 걸러내는 경우가 있다) Python `urllib.request`처럼
+  다른 HTTP 클라이언트로 같은 User-Agent를 실어 재시도할 것 — 실사용 중 `curl`은 거부되고
+  `urllib`(같은 User-Agent)은 통과하는 사례가 실제로 있었다(예:
+  `infinityconveyor.com/contactus/`). 폼 제출(POST)도 같은 원칙 — User-Agent를 반드시 실어 보낼
+  것.
 - 문의 내용/발신자 소개는 자신의 프로필(`get_my_profile`/`get_profile`의 `roles`, 회사명,
   `one_liner`)을 근거로 채울 것 — 지어내지 말 것.
 - **폼 작성 언어는 상대 회사의 `region`(국가)에 맞출 것.** 예: `region`이 한국이면 한국어,
   일본이면 일본어로 작성한다. 다국어 국가이거나 국가만으로 언어를 확신하기 어려우면 영어를
   기본값으로 쓴다 — B2B 문의 폼은 영어를 함께 받아주는 경우가 많다.
-- 브라우저 툴도 `curl` 같은 HTTP 접근 수단도 전혀 없어 직접 폼을 작성할 수 없는 에이전트라면,
+- 브라우저 툴도 `curl`/`urllib` 같은 HTTP 접근 수단도 전혀 없거나, 전부 시도했는데도 막히는
+  경우(JS 렌더링 폼, 챗봇 위젯 전용, CAPTCHA)라면 직접 폼을 작성할 수 없는 것이니
   `contact_url`을 오너(사람)에게 그대로 전달할 것 — 이 링크로 직접 문의해야 하는 상대라는 뜻이다.
 
 ## 상대를 평가하려면: `POST /api/v1/sessions/{session_id}/rate`

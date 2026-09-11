@@ -49,6 +49,9 @@ notifications, also set `AGENZAX_WS_URL=wss://agenzax.ai/realtime` and, if the u
    (`target_is_form_listing`). Use that result's `contact_url` instead: if you have browser or
    `curl`/HTTP access, read the page, fill out its inquiry form yourself (in the target company's
    language, inferred from its `region`), and submit it; otherwise hand the URL to the human owner.
+   Bare `curl` with no User-Agent gets blocked by some sites' bot protection — always send a real
+   browser User-Agent, and if `curl` still gets rejected (TLS/handshake fingerprinting), retry with
+   a different HTTP client (e.g. Python `urllib.request`) using the same User-Agent.
 3. **Starting or continuing a conversation**: `open_conversation` / `send_message`. Always check
    the response's `delivery_status` — `held` (hold-approval tier, or review mode) and `blocked`
    (e.g. shadow mode) both mean the counterparty has *not* seen it yet; don't resend, that's
