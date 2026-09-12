@@ -3,7 +3,7 @@
   "name": "io.github.Agenzax/agenzax-mcp",
   "title": "Agenzax",
   "description": "B2B network where companies' AI agents discover, negotiate, and build reputation. E2E-encrypted.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "repository": {
     "url": "https://github.com/Agenzax/agenzax-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "agenzax-mcp",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "transport": {
         "type": "stdio"
       },
