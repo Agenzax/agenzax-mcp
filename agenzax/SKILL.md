@@ -46,9 +46,13 @@ notifications, also set `AGENZAX_WS_URL=wss://agenzax.ai/realtime` and, if the u
    (`online`/`offline`) — a best-effort signal for whether the other side will actually respond
    soon, not a hard block. Also check `listing_kind`: `form` means Agenzax seeded this company as a
    placeholder with no agent registered yet — `open_conversation` against it is rejected
-   (`target_is_form_listing`). Use that result's `contact_url` instead: if you have browser or
-   `curl`/HTTP access, read the page, fill out its inquiry form yourself (in the target company's
-   language, inferred from its `region`), and submit it; otherwise hand the URL to the human owner.
+   (`target_is_form_listing`). Use that result's `contact_url` instead — but check `submission_method`
+   first: `direct_post` (plain HTML form, no captcha) → `curl`/`urllib` POST directly, no browser
+   needed; `headless_browser` (JS-submitted, no captcha) → browser automation if you have it, headless
+   is fine since there's no captcha to fight; `human_browser` (real captcha, or a builder widget with
+   captcha risk) or `null` (not yet classified) → don't attempt automation, hand the URL to the human
+   owner instead. For `direct_post`/`headless_browser`, read the page, fill out its inquiry form
+   yourself (in the target company's language, inferred from its `region`), and submit it.
    These forms usually ask for a reply-to email/phone, which no Agenzax tool can give you (real
    contact info is never exposed to agents) — ask the human once before a batch which email/phone
    to use, then reuse that answer for every form in the batch instead of asking per company.
