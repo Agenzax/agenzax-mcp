@@ -192,11 +192,22 @@ Bearer 인증 전용 라우트를 쓴다:
   | `headless_browser` | 캡차는 없지만 JS로 제출되는 폼 | 브라우저 자동화 툴(Playwright 등)이 있으면 그걸로 필드 채우고 제출 버튼 클릭 — 헤드리스로 충분, 캡차가 없으니 막히지 않는다 |
   | `human_browser` | 실제 캡차 위젯이 있거나 캡차 위험이 있는 웹툴 폼 | 자동화 시도하지 말 것 — 캡차는 봇 자동화를 막으려고 존재하는 장치라 우회를 시도하면 안 된다. `contact_url`을 오너에게 그대로 전달 |
   | `null`(값 없음) | 아직 분류 안 됨(과거에 등록됐거나 미확인) | `human_browser`와 동일하게 취급 — 확신 없이 자동 제출을 시도하지 말 것 |
-- **`direct_post`/`headless_browser`인 경우**: 웹 브라우저 툴이 있으면 그걸로, 없어도 `curl`
-  등으로 `contact_url`을 직접 읽을 수 있으면 그렇게 할 것. 페이지 HTML을 읽어 문의 폼의 필드
-  구성(이름/이메일/회사명/문의 내용 등)을 파악하고, 가능하면 그 폼을 실제로 채워 제출까지 할
-  것 — 링크만 전달하고 끝내지 말고, 할 수 있는 수단이 있으면 끝까지 대신 처리하는 쪽을
-  우선한다.
+- **`headless_browser`인 경우 먼저 `inspect_wordpress_form`을 시도할 것.** `contact_url`
+  페이지의 96%가 Contact Form 7 또는 Gravity Forms(둘 다 워드프레스 최다 사용 문의폼
+  플러그인)인데, 이 두 플러그인은 실제로는 브라우저/JS 없이도 순수 HTTP로 제출 가능하다(CF7은
+  겉보기와 달리 항상 자체 REST API로 AJAX 제출하고, Gravity Forms는 그냥 같은 페이지로 돌아가는
+  표준 POST다 — 2026-09-13 실측 확인). `inspect_wordpress_form(url)`이 `plugin: null`을
+  반환하면(이 두 플러그인이 아님) 그 다음에만 브라우저 자동화/`curl`로 넘어갈 것.
+  - `inspect_wordpress_form(url)` → 어떤 플러그인인지, 채울 필드 이름(콤보박스가 있으면 그
+    선택지도)을 알려준다.
+  - `submit_wordpress_form(url, fields)` → `fields`에 `{필드명: 값}`으로 채워서 실제 제출.
+    `fields`의 키는 반드시 `inspect_wordpress_form`이 알려준 이름 그대로 쓸 것(플러그인마다
+    `your-name`처럼 의미있는 이름이거나 `input_14`처럼 번호 기반일 수 있다).
+- **그 외 `direct_post`/`headless_browser`(위 두 플러그인이 아닌 경우)**: 웹 브라우저 툴이
+  있으면 그걸로, 없어도 `curl` 등으로 `contact_url`을 직접 읽을 수 있으면 그렇게 할 것. 페이지
+  HTML을 읽어 문의 폼의 필드 구성(이름/이메일/회사명/문의 내용 등)을 파악하고, 가능하면 그 폼을
+  실제로 채워 제출까지 할 것 — 링크만 전달하고 끝내지 말고, 할 수 있는 수단이 있으면 끝까지
+  대신 처리하는 쪽을 우선한다.
 - **User-Agent 없는 맨 `curl`은 일부 사이트(Cloudflare/Akamai 등 봇 차단)에서 막힌다.** 항상
   실제 브라우저 User-Agent를 지정할 것(예: `curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)
   AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" <url>`). 그래도 막히면

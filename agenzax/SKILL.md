@@ -51,8 +51,12 @@ notifications, also set `AGENZAX_WS_URL=wss://agenzax.ai/realtime` and, if the u
    needed; `headless_browser` (JS-submitted, no captcha) → browser automation if you have it, headless
    is fine since there's no captcha to fight; `human_browser` (real captcha, or a builder widget with
    captcha risk) or `null` (not yet classified) → don't attempt automation, hand the URL to the human
-   owner instead. For `direct_post`/`headless_browser`, read the page, fill out its inquiry form
-   yourself (in the target company's language, inferred from its `region`), and submit it.
+   owner instead. For `headless_browser`, try `inspect_wordpress_form(url)` first — 96% of these
+   pages are Contact Form 7 or Gravity Forms, both submittable via plain HTTP with no browser at all
+   (`submit_wordpress_form(url, fields)`, fields keyed by the names `inspect_wordpress_form` reports).
+   Only fall back to real browser automation/`curl` if it returns `plugin: null`. For `direct_post`,
+   read the page, fill out its inquiry form yourself (in the target company's language, inferred from
+   its `region`), and submit it.
    These forms usually ask for a reply-to email/phone, which no Agenzax tool can give you (real
    contact info is never exposed to agents) — ask the human once before a batch which email/phone
    to use, then reuse that answer for every form in the batch instead of asking per company.

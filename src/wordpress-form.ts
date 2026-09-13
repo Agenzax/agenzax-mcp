@@ -1,0 +1,195 @@
+// 워드프레스 문의폼(Contact Form 7 / Gravity Forms) 순수 HTTP 제출 — A2F contact_url이
+// submission_method: "headless_browser"인 경우의 96%가 이 두 플러그인이었다(2026-09-13 실측,
+// wiki/scripts/wordpress-form-submit.py의 Python 버전에서 이식). 둘 다 헤드리스 브라우저 없이
+// fetch만으로 끝까지 처리 가능하다는 게 실측 확인됐다:
+//   - Contact Form 7: <form action="...">이 멀쩡해 보여도 실제로는 항상 JS가 가로채 자체
+//     REST API(/wp-json/contact-form-7/v1/contact-forms/{id}/feedback)로 제출한다. 필요한 hidden
+//     필드(_wpcf7, _wpcf7_version 등)는 전부 페이지 HTML에 정적으로 있다.
+//   - Gravity Forms: 기본 제출 방식이 gform_submission_method="postback" — AJAX가 아니라 그냥
+//     같은 페이지로 돌아가는 표준 HTML POST다.
+
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36";
+
+function unescapeHtml(s: string): string {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+async function fetchHtml(url: string): Promise<{ html: string; cookies: string[] }> {
+  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  const html = await res.text();
+  const cookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+  return { html, cookies };
+}
+
+function cookieHeader(cookies: string[]): string {
+  return cookies.map((c) => c.split(";")[0]).join("; ");
+}
+
+interface Cf7Form {
+  hidden: Record<string, string>;
+  fillable: string[];
+  selects: Record<string, [string, string][]>;
+}
+
+function findCf7Form(html: string): Cf7Form | null {
+  const formRe = /<form\b[^>]*class="[^"]*wpcf7-form[^"]*"[^>]*>([\s\S]*?)<\/form>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = formRe.exec(html))) {
+    const body = m[1];
+    const hidden: Record<string, string> = {};
+    const hiddenRe1 = /<input[^>]*type=["']hidden["'][^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["']/gi;
+    let hm: RegExpExecArray | null;
+    while ((hm = hiddenRe1.exec(body))) hidden[hm[1]] = unescapeHtml(hm[2]);
+    const hiddenRe2 = /<input[^>]*type=["']hidden["'][^>]*value=["']([^"']*)["'][^>]*name=["']([^"']+)["']/gi;
+    while ((hm = hiddenRe2.exec(body))) if (!(hm[2] in hidden)) hidden[hm[2]] = unescapeHtml(hm[1]);
+    if (!("_wpcf7" in hidden)) continue;
+
+    const fillable: string[] = [];
+    const fieldRe = /<(?:input|textarea)\b[^>]*name=["']([^"']+)["']/gi;
+    let fm: RegExpExecArray | null;
+    while ((fm = fieldRe.exec(body))) {
+      const name = fm[1];
+      if (name.startsWith("_wpcf7") || fillable.includes(name)) continue;
+      fillable.push(name);
+    }
+
+    const selects: Record<string, [string, string][]> = {};
+    const selectRe = /<select\b[^>]*name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/select>/gi;
+    let sm: RegExpExecArray | null;
+    while ((sm = selectRe.exec(body))) {
+      const [, name, optionsHtml] = sm;
+      if (name.startsWith("_wpcf7")) continue;
+      const options: [string, string][] = [];
+      const optRe = /<option\b[^>]*value=["']([^"']*)["'][^>]*>([^<]*)/gi;
+      let om: RegExpExecArray | null;
+      while ((om = optRe.exec(optionsHtml))) options.push([om[1], unescapeHtml(om[2]).trim()]);
+      selects[name] = options;
+      if (!fillable.includes(name)) fillable.push(name);
+    }
+    return { hidden, fillable, selects };
+  }
+  return null;
+}
+
+async function submitCf7(pageUrl: string, form: Cf7Form, fieldValues: Record<string, string>) {
+  const missing = form.fillable.filter((f) => !(f in fieldValues));
+  if (missing.length > 0) {
+    return { status: "error", message: `필요한 필드 값이 없습니다: ${missing.join(", ")}`, fillable_fields: form.fillable, select_options: form.selects };
+  }
+  const invalidSelects: Record<string, unknown> = {};
+  for (const [name, options] of Object.entries(form.selects)) {
+    if (!options.some(([v]) => v === fieldValues[name])) {
+      invalidSelects[name] = { given: fieldValues[name], valid_options: options };
+    }
+  }
+  if (Object.keys(invalidSelects).length > 0) {
+    return { status: "error", message: "select 필드에 유효하지 않은 값이 있습니다.", invalid_selects: invalidSelects };
+  }
+
+  const formId = form.hidden["_wpcf7"];
+  const payload: Record<string, string> = { ...form.hidden };
+  for (const name of form.fillable) payload[name] = fieldValues[name];
+
+  const origin = new URL(pageUrl);
+  const apiUrl = `${origin.protocol}//${origin.host}/wp-json/contact-form-7/v1/contact-forms/${formId}/feedback`;
+  const body = new FormData();
+  for (const [k, v] of Object.entries(payload)) body.append(k, v);
+
+  const res = await fetch(apiUrl, { method: "POST", body, headers: { "User-Agent": UA, Referer: pageUrl } });
+  const text = await res.text();
+  if (!res.ok) return { status: "error", message: `HTTP ${res.status}: ${text.slice(0, 300)}` };
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { status: "error", message: `응답 파싱 실패: ${text.slice(0, 300)}` };
+  }
+}
+
+interface GfForm {
+  actionUrl: string;
+  formId: string;
+  hidden: Record<string, string>;
+  fillable: string[];
+}
+
+function findGfForm(html: string, pageUrl: string): GfForm | null {
+  const formTagMatch = /<form\b[^>]*id=["']gform_(\d+)["'][^>]*>/i.exec(html);
+  if (!formTagMatch) return null;
+  const formId = formTagMatch[1];
+  const tag = formTagMatch[0];
+  const actionMatch = /action=["']([^"']*)["']/i.exec(tag);
+  const actionUrl = actionMatch ? new URL(actionMatch[1], pageUrl).toString() : pageUrl;
+
+  const bodyMatch = new RegExp(`<form\\b[^>]*id=["']gform_${formId}["'][^>]*>([\\s\\S]*?)<\\/form>`, "i").exec(html);
+  const body = bodyMatch ? bodyMatch[1] : "";
+
+  const hidden: Record<string, string> = {};
+  const hiddenRe1 = /<input[^>]*type=["']hidden["'][^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["']/gi;
+  let hm: RegExpExecArray | null;
+  while ((hm = hiddenRe1.exec(body))) hidden[hm[1]] = unescapeHtml(hm[2]);
+  const hiddenRe2 = /<input[^>]*type=["']hidden["'][^>]*value=["']([^"']*)["'][^>]*name=["']([^"']+)["']/gi;
+  while ((hm = hiddenRe2.exec(body))) if (!(hm[2] in hidden)) hidden[hm[2]] = unescapeHtml(hm[1]);
+  if (!(`is_submit_${formId}` in hidden)) hidden[`is_submit_${formId}`] = "1";
+  if (!("gform_submit" in hidden)) hidden["gform_submit"] = formId;
+
+  const fillable: string[] = [];
+  const fieldRe = /<(?:input|textarea|select)\b[^>]*name=["']([^"']+)["']/gi;
+  let fm: RegExpExecArray | null;
+  while ((fm = fieldRe.exec(body))) {
+    const name = fm[1];
+    if (name in hidden || fillable.includes(name)) continue;
+    const isHiddenType = new RegExp(`name=["']${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*type=["']hidden["']`, "i").test(body);
+    if (isHiddenType) continue;
+    fillable.push(name);
+  }
+  return { actionUrl, formId, hidden, fillable };
+}
+
+async function submitGf(pageUrl: string, form: GfForm, fieldValues: Record<string, string>, cookies: string[]) {
+  const payload: Record<string, string> = { ...form.hidden, ...fieldValues };
+  const body = new FormData();
+  for (const [k, v] of Object.entries(payload)) body.append(k, v);
+
+  const headers: Record<string, string> = { "User-Agent": UA, Referer: pageUrl };
+  const cookieStr = cookieHeader(cookies);
+  if (cookieStr) headers["Cookie"] = cookieStr;
+
+  const res = await fetch(form.actionUrl, { method: "POST", body, headers });
+  const responseHtml = await res.text();
+  if (!res.ok) return { status: "error", message: `HTTP ${res.status}: ${responseHtml.slice(0, 300)}` };
+
+  if (/gform_confirmation_message|gform_confirmation_wrapper/i.test(responseHtml)) {
+    return { status: "mail_sent", message: "제출 성공(확인 메시지 감지)" };
+  }
+  if (/validation_error|gfield_error/i.test(responseHtml)) {
+    const errors: string[] = [];
+    const errRe = /<div[^>]*class="[^"]*gfield_description[^"]*validation_message[^"]*"[^>]*>([^<]*)/gi;
+    let em: RegExpExecArray | null;
+    while ((em = errRe.exec(responseHtml))) errors.push(em[1]);
+    return { status: "validation_failed", message: "필드 검증 실패", errors };
+  }
+  return { status: "unknown", message: "성공/실패를 응답에서 판정하지 못함 — 페이지 구조가 다를 수 있음" };
+}
+
+export async function inspectWordPressForm(pageUrl: string): Promise<Record<string, unknown>> {
+  const { html } = await fetchHtml(pageUrl);
+  const cf7 = findCf7Form(html);
+  if (cf7) return { plugin: "contact_form_7", form_id: cf7.hidden["_wpcf7"], fillable_fields: cf7.fillable, select_options: cf7.selects };
+  const gf = findGfForm(html, pageUrl);
+  if (gf) return { plugin: "gravity_forms", form_id: gf.formId, action: gf.actionUrl, fillable_fields: gf.fillable };
+  return { plugin: null, message: "이 페이지에서 CF7/Gravity Forms 폼을 찾지 못했습니다." };
+}
+
+export async function submitWordPressForm(pageUrl: string, fieldValues: Record<string, string>): Promise<Record<string, unknown>> {
+  const { html, cookies } = await fetchHtml(pageUrl);
+  const cf7 = findCf7Form(html);
+  if (cf7) return submitCf7(pageUrl, cf7, fieldValues);
+  const gf = findGfForm(html, pageUrl);
+  if (gf) return submitGf(pageUrl, gf, fieldValues, cookies);
+  return { status: "error", message: "이 페이지에서 CF7/Gravity Forms 폼을 찾지 못했습니다." };
+}

@@ -34,6 +34,7 @@ import { bufferToBase64, base64ToBuffer } from "./binary.js";
 import { ROLE_VALUES } from "./roles.js";
 import { generatePairingSecret, signBackfillRequest, verifyBackfillRequest } from "./pairing.js";
 import { startRealtimeClient } from "./realtime.js";
+import { inspectWordPressForm, submitWordPressForm } from "./wordpress-form.js";
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -679,6 +680,38 @@ server.registerTool(
   async () => {
     try {
       return text(await api(`/api/v1/events?listing_id=${requireListingId()}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "inspect_wordpress_form",
+  {
+    description:
+      "For a listing_kind: 'form' target whose contact_url is a WordPress site (Contact Form 7 or Gravity Forms — these cover ~96% of contact_url pages classified submission_method: 'headless_browser'): fetch that page and report which plugin it uses plus the exact field names to fill (and, for CF7, any dropdown's valid option values). Call this BEFORE submit_wordpress_form so you know what to pass. If the page uses neither plugin, plugin comes back null — fall back to handing contact_url to your human owner (or a general browser-automation tool if you have one) instead.",
+    inputSchema: { url: z.string() },
+  },
+  async ({ url }) => {
+    try {
+      return text(await inspectWordPressForm(url));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "submit_wordpress_form",
+  {
+    description:
+      "Submit a WordPress contact form (Contact Form 7 or Gravity Forms, auto-detected) at contact_url using plain HTTP — no browser needed, even though these forms are JS-submitted in a real browser (CF7 posts to its own REST feedback endpoint; Gravity Forms posts back to the same page). Call inspect_wordpress_form first to get the exact field names (fields is a map of those names to the text you want in them — use your own profile's company name/one_liner for the message, never invented contact info; ask your human owner once per batch which email/phone to use). Only use this for pages with no CAPTCHA (submission_method must be 'headless_browser', not 'human_browser') — CAPTCHA-protected forms must go to the human owner instead. Returns the plugin's own response: CF7 gives {status: 'mail_sent'|'mail_failed'|'validation_failed'|'spam', ...}; Gravity Forms gives {status: 'mail_sent'|'validation_failed'|'unknown', ...} inferred from the confirmation page.",
+    inputSchema: { url: z.string(), fields: z.record(z.string(), z.string()) },
+  },
+  async ({ url, fields }) => {
+    try {
+      return text(await submitWordPressForm(url, fields));
     } catch (err) {
       return errorResult(err);
     }
