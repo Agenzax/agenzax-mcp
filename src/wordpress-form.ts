@@ -1,12 +1,16 @@
-// 워드프레스 문의폼(Contact Form 7 / Gravity Forms) 순수 HTTP 제출 — A2F contact_url이
-// submission_method: "headless_browser"인 경우의 96%가 이 두 플러그인이었다(2026-09-13 실측,
-// wiki/scripts/wordpress-form-submit.py의 Python 버전에서 이식). 둘 다 헤드리스 브라우저 없이
-// fetch만으로 끝까지 처리 가능하다는 게 실측 확인됐다:
+// 워드프레스 문의폼(Contact Form 7 / Gravity Forms / Elementor Forms) 순수 HTTP 제출 —
+// A2F 후보 387건 정밀 재스캔 결과 CF7 128건(33%)·Elementor 56건(15%)·GravityForms 15건이
+// 확인됐다(2026-09-15, wiki/scripts/wordpress-form-submit.py의 Python 버전에서 이식). 셋 다
+// 헤드리스 브라우저 없이 fetch만으로 끝까지 처리 가능하다는 게 실측 확인됐다:
 //   - Contact Form 7: <form action="...">이 멀쩡해 보여도 실제로는 항상 JS가 가로채 자체
 //     REST API(/wp-json/contact-form-7/v1/contact-forms/{id}/feedback)로 제출한다. 필요한 hidden
 //     필드(_wpcf7, _wpcf7_version 등)는 전부 페이지 HTML에 정적으로 있다.
 //   - Gravity Forms: 기본 제출 방식이 gform_submission_method="postback" — AJAX가 아니라 그냥
 //     같은 페이지로 돌아가는 표준 HTML POST다.
+//   - Elementor (Pro) Forms: <form>에 action이 아예 없지만, 실제로는 워드프레스 표준 AJAX
+//     엔드포인트(/wp-admin/admin-ajax.php)로 action=elementor_pro_forms_send_form과 함께
+//     post_id/form_id/referer_title/queried_id(전부 페이지 HTML에 정적) + referrer(현재 페이지
+//     URL)를 실어 POST한다. 필드명은 name="form_fields[실제필드키]" 형태.
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36";
 
@@ -176,13 +180,87 @@ async function submitGf(pageUrl: string, form: GfForm, fieldValues: Record<strin
   return { status: "unknown", message: "성공/실패를 응답에서 판정하지 못함 — 페이지 구조가 다를 수 있음" };
 }
 
+interface ElementorForm {
+  hidden: Record<string, string>;
+  fillable: string[];
+  selects: Record<string, [string, string][]>;
+  ajaxUrl: string;
+}
+
+function findElementorForm(html: string, pageUrl: string): ElementorForm | null {
+  const formMatch = /<form\b[^>]*class="[^"]*elementor-form[^"]*"[^>]*>([\s\S]*?)<\/form>/i.exec(html);
+  if (!formMatch) return null;
+  const body = formMatch[1];
+
+  const hidden: Record<string, string> = {};
+  const hiddenRe1 = /<input[^>]*type=["']hidden["'][^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["']/gi;
+  let hm: RegExpExecArray | null;
+  while ((hm = hiddenRe1.exec(body))) hidden[hm[1]] = unescapeHtml(hm[2]);
+  const hiddenRe2 = /<input[^>]*type=["']hidden["'][^>]*value=["']([^"']*)["'][^>]*name=["']([^"']+)["']/gi;
+  while ((hm = hiddenRe2.exec(body))) if (!(hm[2] in hidden)) hidden[hm[2]] = unescapeHtml(hm[1]);
+  if (!("form_id" in hidden)) return null;
+
+  const fillable: string[] = [];
+  const fieldRe = /<(?:input|textarea|select)\b[^>]*name=["']form_fields\[([^\]]+)\]["']/gi;
+  let fm: RegExpExecArray | null;
+  while ((fm = fieldRe.exec(body))) {
+    const name = fm[1];
+    if (!fillable.includes(name)) fillable.push(name);
+  }
+
+  const selects: Record<string, [string, string][]> = {};
+  const selectRe = /<select\b[^>]*name=["']form_fields\[([^\]]+)\]["'][^>]*>([\s\S]*?)<\/select>/gi;
+  let sm: RegExpExecArray | null;
+  while ((sm = selectRe.exec(body))) {
+    const [, name, optionsHtml] = sm;
+    const options: [string, string][] = [];
+    const optRe = /<option\b[^>]*value=["']([^"']*)["'][^>]*>([^<]*)/gi;
+    let om: RegExpExecArray | null;
+    while ((om = optRe.exec(optionsHtml))) options.push([om[1], unescapeHtml(om[2]).trim()]);
+    selects[name] = options;
+  }
+
+  const origin = new URL(pageUrl);
+  const ajaxUrl = `${origin.protocol}//${origin.host}/wp-admin/admin-ajax.php`;
+  return { hidden, fillable, selects, ajaxUrl };
+}
+
+async function submitElementor(pageUrl: string, form: ElementorForm, fieldValues: Record<string, string>) {
+  const missing = form.fillable.filter((f) => !(f in fieldValues));
+  if (missing.length > 0) {
+    return { status: "error", message: `필요한 필드 값이 없습니다: ${missing.join(", ")}`, fillable_fields: form.fillable, select_options: form.selects };
+  }
+
+  const payload: Record<string, string> = { ...form.hidden };
+  for (const name of form.fillable) payload[`form_fields[${name}]`] = fieldValues[name];
+  payload["action"] = "elementor_pro_forms_send_form";
+  payload["referrer"] = pageUrl;
+
+  const body = new FormData();
+  for (const [k, v] of Object.entries(payload)) body.append(k, v);
+
+  const res = await fetch(form.ajaxUrl, { method: "POST", body, headers: { "User-Agent": UA, Referer: pageUrl } });
+  const text = await res.text();
+  if (!res.ok) return { status: "error", message: `HTTP ${res.status}: ${text.slice(0, 300)}` };
+  let resp: { success?: boolean; [key: string]: unknown };
+  try {
+    resp = JSON.parse(text);
+  } catch {
+    return { status: "error", message: `응답 파싱 실패: ${text.slice(0, 300)}` };
+  }
+  if (resp.success) return { status: "mail_sent", message: "제출 성공", response: resp };
+  return { status: "error", message: "제출 실패", response: resp };
+}
+
 export async function inspectWordPressForm(pageUrl: string): Promise<Record<string, unknown>> {
   const { html } = await fetchHtml(pageUrl);
   const cf7 = findCf7Form(html);
   if (cf7) return { plugin: "contact_form_7", form_id: cf7.hidden["_wpcf7"], fillable_fields: cf7.fillable, select_options: cf7.selects };
   const gf = findGfForm(html, pageUrl);
   if (gf) return { plugin: "gravity_forms", form_id: gf.formId, action: gf.actionUrl, fillable_fields: gf.fillable };
-  return { plugin: null, message: "이 페이지에서 CF7/Gravity Forms 폼을 찾지 못했습니다." };
+  const el = findElementorForm(html, pageUrl);
+  if (el) return { plugin: "elementor_forms", fillable_fields: el.fillable, select_options: el.selects };
+  return { plugin: null, message: "이 페이지에서 CF7/Gravity Forms/Elementor Forms 폼을 찾지 못했습니다." };
 }
 
 export async function submitWordPressForm(pageUrl: string, fieldValues: Record<string, string>): Promise<Record<string, unknown>> {
@@ -191,5 +269,7 @@ export async function submitWordPressForm(pageUrl: string, fieldValues: Record<s
   if (cf7) return submitCf7(pageUrl, cf7, fieldValues);
   const gf = findGfForm(html, pageUrl);
   if (gf) return submitGf(pageUrl, gf, fieldValues, cookies);
-  return { status: "error", message: "이 페이지에서 CF7/Gravity Forms 폼을 찾지 못했습니다." };
+  const el = findElementorForm(html, pageUrl);
+  if (el) return submitElementor(pageUrl, el, fieldValues);
+  return { status: "error", message: "이 페이지에서 CF7/Gravity Forms/Elementor Forms 폼을 찾지 못했습니다." };
 }

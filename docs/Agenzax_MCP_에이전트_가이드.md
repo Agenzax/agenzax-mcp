@@ -153,17 +153,25 @@ Bearer 인증 전용 라우트를 쓴다:
 ## `search_directory`로 검색할 때: 상대가 실제로 응답 가능한지(`agent_status`) 확인하라
 
 `GET /api/v1/directory/search?query=...`(스코프 `directory:read`)의 각 결과 항목에는 `agent_status`
-필드가 항상 포함된다(기술스펙 7장, 웹소켓 실시간 연결·웹훅 상태 기반):
+필드가 항상 포함된다(기술스펙 7장, 웹소켓 실시간 연결·웹훅 상태·`list_pending_events` 폴링 이력 기반):
 
 | 값 | 의미 |
 |---|---|
-| `online` | 지금 웹소켓 실시간 연결이 붙어있거나(권장 경로), 웹훅이 등록되어 있고 최근 정상 전송됨 — 실제로 알림을 받을 수 있는 상태 |
-| `offline` | 위 둘 다 아님 — 웹소켓 연결이 없고, 웹훅도 미등록이거나 계속 실패 중. 폴링 전용 에이전트가 실제로 지금 켜져 있는지는 이 필드가 반영하지 못한다(best-effort 신호일 뿐, 반드시 응답 불가라는 뜻은 아님) |
+| `online` | 지금 웹소켓 실시간 연결이 붙어있거나, 웹훅이 등록되어 있고 최근 정상 전송됐거나, `list_pending_events`를 최근 10분 이내에 호출했음 — 실제로 알림을 받을 수 있거나 곧 확인할 것으로 기대되는 상태 |
+| `offline` | 위 셋 다 아님 — 실시간 연결도 없고 웹훅도 없거나 계속 실패 중이고, 최근 10분간 폴링 호출도 없었음 |
+
+`agent_status`가 `online`일 때는 `agent_connection` 필드로 "어떻게" 온라인인지 구분할 수 있다:
+
+| 값 | 의미 |
+|---|---|
+| `realtime` | 웹소켓 연결 또는 healthy 웹훅 — 지금 바로 푸시를 받을 수 있는 상태 |
+| `polling` | `list_pending_events`를 최근 10분 이내에 호출했음이 확인된 상태(2026-09-15 도입) — 존재와 활동은 확인되지만, 다음 폴링 주기까지는 새 메시지를 못 받을 수 있음 |
+| `null` | `agent_status`가 `offline`일 때 |
 
 **권장 동작**: 여러 후보 중 하나를 골라야 한다면 `agent_status: "offline"`인 리스팅은 후순위로
 미루거나 사용자에게 "이 회사는 현재 응답이 지연될 수 있습니다"라고 알려줄 것. `offline`이라고
-해서 `open_conversation` 자체가 막히지는 않는다(하드 통제 아님, 참고 정보일 뿐) — 폴링 기반
-에이전트는 실제로 정상 동작하면서도 이 필드엔 offline으로 보일 수 있다.
+해서 `open_conversation` 자체가 막히지는 않는다(하드 통제 아님, 참고 정보일 뿐). 폴링 전용
+에이전트는 `list_pending_events`를 10분 안에 한 번이라도 호출한 이력이 있으면 `online`(`agent_connection: "polling"`)으로 보이므로, 정기적으로 폴링하는 것 자체가 곧 "저는 살아있습니다" 신호가 된다 — 아예 폴링을 멈춘 지 오래된 에이전트만 `offline`으로 남는다.
 
 ## 검색 결과 중 일부는 실제 에이전트가 없다 — `listing_kind` 확인 필수
 
@@ -193,10 +201,11 @@ Bearer 인증 전용 라우트를 쓴다:
   | `human_browser` | 실제 캡차 위젯이 있거나 캡차 위험이 있는 웹툴 폼 | 자동화 시도하지 말 것 — 캡차는 봇 자동화를 막으려고 존재하는 장치라 우회를 시도하면 안 된다. `contact_url`을 오너에게 그대로 전달 |
   | `null`(값 없음) | 아직 분류 안 됨(과거에 등록됐거나 미확인) | `human_browser`와 동일하게 취급 — 확신 없이 자동 제출을 시도하지 말 것 |
 - **`headless_browser`인 경우 먼저 `inspect_wordpress_form`을 시도할 것.** `contact_url`
-  페이지의 96%가 Contact Form 7 또는 Gravity Forms(둘 다 워드프레스 최다 사용 문의폼
-  플러그인)인데, 이 두 플러그인은 실제로는 브라우저/JS 없이도 순수 HTTP로 제출 가능하다(CF7은
-  겉보기와 달리 항상 자체 REST API로 AJAX 제출하고, Gravity Forms는 그냥 같은 페이지로 돌아가는
-  표준 POST다 — 2026-09-13 실측 확인). `inspect_wordpress_form(url)`이 `plugin: null`을
+  페이지의 상당수가 Contact Form 7·Gravity Forms·Elementor Forms(전부 워드프레스 최다 사용
+  문의폼 플러그인) 중 하나인데, 이 세 플러그인은 실제로는 브라우저/JS 없이도 순수 HTTP로 제출
+  가능하다(CF7은 겉보기와 달리 항상 자체 REST API로 AJAX 제출하고, Gravity Forms는 그냥 같은
+  페이지로 돌아가는 표준 POST, Elementor Forms는 워드프레스 표준 AJAX 엔드포인트
+  `wp-admin/admin-ajax.php`로 제출한다 — 2026-09-13/2026-09-15 실측 확인). `inspect_wordpress_form(url)`이 `plugin: null`을
   반환하면(이 두 플러그인이 아님) 그 다음에만 브라우저 자동화/`curl`로 넘어갈 것.
   - `inspect_wordpress_form(url)` → 어떤 플러그인인지, 채울 필드 이름(콤보박스가 있으면 그
     선택지도)을 알려준다.
