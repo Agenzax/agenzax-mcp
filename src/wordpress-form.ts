@@ -23,12 +23,19 @@ function unescapeHtml(s: string): string {
     .replace(/&gt;/g, ">");
 }
 
-async function fetchHtml(url: string): Promise<{ html: string; cookies: string[] }> {
+async function fetchHtml(url: string): Promise<{ html: string; cookies: string[]; status: number }> {
   const res = await fetch(url, { headers: { "User-Agent": UA } });
   const html = await res.text();
   const cookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
-  return { html, cookies };
+  return { html, cookies, status: res.status };
 }
+
+// plugin: null이 "CF7/GF/Elementor가 아니다"인지 "그 이전에 요청 자체가 막혔다"(Cloudflare 등
+// WAF의 TLS 지문 차단 — UA/헤더 스푸핑으로는 안 뚫림, 2026-09-15 dh-robotics.com 실측)인지 호출한
+// 에이전트가 구분 못 하면 둘 다 "폼을 못 찾음"으로 보여 다음 행동을 못 정한다. 서버 코드에 "그럴 땐
+// Playwright를 써라" 식으로 특정 툴을 못박지 않고(호출측이 뭘 갖고 있는지 여긴 알 수 없다), 최신
+// 대응 방법이 코드 재배포 없이도 갱신되도록 퀵스타트 문서 링크만 힌트로 실어보낸다.
+const QUICKSTART_HINT = "See https://agenzax.ai/quickstart (FAQ: submission_method headless_browser) for what to try next.";
 
 function cookieHeader(cookies: string[]): string {
   return cookies.map((c) => c.split(";")[0]).join("; ");
@@ -253,23 +260,38 @@ async function submitElementor(pageUrl: string, form: ElementorForm, fieldValues
 }
 
 export async function inspectWordPressForm(pageUrl: string): Promise<Record<string, unknown>> {
-  const { html } = await fetchHtml(pageUrl);
+  const { html, status } = await fetchHtml(pageUrl);
   const cf7 = findCf7Form(html);
   if (cf7) return { plugin: "contact_form_7", form_id: cf7.hidden["_wpcf7"], fillable_fields: cf7.fillable, select_options: cf7.selects };
   const gf = findGfForm(html, pageUrl);
   if (gf) return { plugin: "gravity_forms", form_id: gf.formId, action: gf.actionUrl, fillable_fields: gf.fillable };
   const el = findElementorForm(html, pageUrl);
   if (el) return { plugin: "elementor_forms", fillable_fields: el.fillable, select_options: el.selects };
-  return { plugin: null, message: "이 페이지에서 CF7/Gravity Forms/Elementor Forms 폼을 찾지 못했습니다." };
+  if (status >= 400) {
+    return {
+      plugin: null,
+      http_status: status,
+      message: `페이지 요청이 HTTP ${status}로 거부됐습니다 — WAF/봇 차단일 수 있습니다(User-Agent를 스푸핑해도 TLS 지문으로 막는 경우가 있어, 이 fetch 기반 툴로는 못 뚫을 수 있습니다).`,
+      hint: QUICKSTART_HINT,
+    };
+  }
+  return { plugin: null, message: "이 페이지에서 CF7/Gravity Forms/Elementor Forms 폼을 찾지 못했습니다.", hint: QUICKSTART_HINT };
 }
 
 export async function submitWordPressForm(pageUrl: string, fieldValues: Record<string, string>): Promise<Record<string, unknown>> {
-  const { html, cookies } = await fetchHtml(pageUrl);
+  const { html, cookies, status } = await fetchHtml(pageUrl);
   const cf7 = findCf7Form(html);
   if (cf7) return submitCf7(pageUrl, cf7, fieldValues);
   const gf = findGfForm(html, pageUrl);
   if (gf) return submitGf(pageUrl, gf, fieldValues, cookies);
   const el = findElementorForm(html, pageUrl);
   if (el) return submitElementor(pageUrl, el, fieldValues);
-  return { status: "error", message: "이 페이지에서 CF7/Gravity Forms/Elementor Forms 폼을 찾지 못했습니다." };
+  if (status >= 400) {
+    return {
+      status: "error",
+      message: `페이지 요청이 HTTP ${status}로 거부됐습니다 — WAF/봇 차단일 수 있습니다(User-Agent를 스푸핑해도 TLS 지문으로 막는 경우가 있어, 이 fetch 기반 툴로는 못 뚫을 수 있습니다).`,
+      hint: QUICKSTART_HINT,
+    };
+  }
+  return { status: "error", message: "이 페이지에서 CF7/Gravity Forms/Elementor Forms 폼을 찾지 못했습니다.", hint: QUICKSTART_HINT };
 }

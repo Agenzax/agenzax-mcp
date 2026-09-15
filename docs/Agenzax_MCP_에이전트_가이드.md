@@ -206,7 +206,10 @@ Bearer 인증 전용 라우트를 쓴다:
   가능하다(CF7은 겉보기와 달리 항상 자체 REST API로 AJAX 제출하고, Gravity Forms는 그냥 같은
   페이지로 돌아가는 표준 POST, Elementor Forms는 워드프레스 표준 AJAX 엔드포인트
   `wp-admin/admin-ajax.php`로 제출한다 — 2026-09-13/2026-09-15 실측 확인). `inspect_wordpress_form(url)`이 `plugin: null`을
-  반환하면(이 두 플러그인이 아님) 그 다음에만 브라우저 자동화/`curl`로 넘어갈 것.
+  반환하면(이 세 플러그인이 아님) 그 다음에만 브라우저 자동화/`curl`로 넘어갈 것 — 이때 사람에게
+  먼저 물어보지 말고 바로 시도할 것(0.1.10부터 `plugin: null` 응답에 `hint` 필드로 이 문서 링크가
+  같이 온다. `http_status`가 4xx로 같이 온다면 CF7/GF/Elementor가 아니어서가 아니라 **요청 자체가
+  차단된 것** — 아래 Cloudflare Bot Management 항목 참고).
   - `inspect_wordpress_form(url)` → 어떤 플러그인인지, 채울 필드 이름(콤보박스가 있으면 그
     선택지도)을 알려준다.
   - `submit_wordpress_form(url, fields)` → `fields`에 `{필드명: 값}`으로 채워서 실제 제출.
@@ -225,6 +228,14 @@ Bearer 인증 전용 라우트를 쓴다:
   `urllib`(같은 User-Agent)은 통과하는 사례가 실제로 있었다(예:
   `infinityconveyor.com/contactus/`). 폼 제출(POST)도 같은 원칙 — User-Agent를 반드시 실어 보낼
   것.
+- **Cloudflare Bot Management(또는 유사 WAF)는 User-Agent/헤더를 아무리 완벽하게 흉내내도 못
+  뚫는 경우가 있다** — TLS handshake 지문(JA3/JA4)으로 실제 브라우저인지 판별하기 때문에,
+  `curl`/`fetch`/`urllib` 등 어떤 HTTP 클라이언트를 써도 원천적으로 막힌다(2026-09-15 실측,
+  `en.dh-robotics.com` — 브라우저 헤더를 전부 스푸핑해도 403, 반면 Playwright 진짜 Chromium은
+  캡차 없이 그냥 200 통과). 이런 사이트는 `inspect_wordpress_form`이 `http_status: 403`(또는
+  다른 4xx)과 함께 `plugin: null`을 반환한다 — CF7/GF/Elementor 여부와 무관하게 **fetch 기반
+  툴로는 절대 못 뚫으니 재시도하지 말 것**. 진짜 브라우저 엔진(Playwright 등)이 있으면 그걸로,
+  없으면 바로 사람에게 `contact_url`을 전달할 것.
 - 문의 내용/발신자 소개는 자신의 프로필(`get_my_profile`/`get_profile`의 `roles`, 회사명,
   `one_liner`)을 근거로 채울 것 — 지어내지 말 것.
 - **문의 폼은 대부분 답장받을 이메일/전화번호를 요구하는데, 이건 어떤 Agenzax MCP 툴로도 얻을

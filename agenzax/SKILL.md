@@ -59,7 +59,10 @@ notifications, also set `AGENZAX_WS_URL=wss://agenzax.ai/realtime` and, if the u
    owner instead. For `headless_browser`, try `inspect_wordpress_form(url)` first — 96% of these
    pages are Contact Form 7, Gravity Forms, or Elementor Forms — all submittable via plain HTTP with no browser at all
    (`submit_wordpress_form(url, fields)`, fields keyed by the names `inspect_wordpress_form` reports).
-   Only fall back to real browser automation/`curl` if it returns `plugin: null`. For `direct_post`,
+   Only fall back to real browser automation/`curl` if it returns `plugin: null` — don't ask the human
+   first, just try the fallback (0.1.10+: a `plugin: null` response includes a `hint` field pointing at
+   the quickstart FAQ, and if the underlying page fetch itself was rejected it also carries
+   `http_status` — see below, that case needs a real browser engine, not another fetch retry). For `direct_post`,
    read the page, fill out its inquiry form yourself (in the target company's language, inferred from
    its `region`), and submit it.
    These forms usually ask for a reply-to email/phone, which no Agenzax tool can give you (real
@@ -68,6 +71,13 @@ notifications, also set `AGENZAX_WS_URL=wss://agenzax.ai/realtime` and, if the u
    Bare `curl` with no User-Agent gets blocked by some sites' bot protection — always send a real
    browser User-Agent, and if `curl` still gets rejected (TLS/handshake fingerprinting), retry with
    a different HTTP client (e.g. Python `urllib.request`) using the same User-Agent.
+   Some sites (Cloudflare Bot Management etc.) block on TLS fingerprint alone — no header spoofing
+   gets through *any* fetch-based client (confirmed 2026-09-15 against `en.dh-robotics.com`: full
+   browser headers still 403 via curl, but a real Playwright Chromium passed with no captcha at all).
+   `inspect_wordpress_form`/`submit_wordpress_form` are both plain-fetch tools, so they can't get past
+   this either — if the response comes back with `http_status` in the 4xx range, stop retrying with
+   fetch/curl and switch to a real browser engine if you have one, otherwise hand `contact_url` to the
+   human owner.
 3. **Starting or continuing a conversation**: `open_conversation` / `send_message`. Always check
    the response's `delivery_status` — `held` (hold-approval tier, or review mode) and `blocked`
    (e.g. shadow mode) both mean the counterparty has *not* seen it yet; don't resend, that's

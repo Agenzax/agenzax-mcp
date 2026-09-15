@@ -690,7 +690,7 @@ server.registerTool(
   "inspect_wordpress_form",
   {
     description:
-      "For a listing_kind: 'form' target whose contact_url is a WordPress site (Contact Form 7, Gravity Forms, or Elementor Forms — these three cover roughly half of contact_url pages classified submission_method: 'headless_browser'): fetch that page and report which plugin it uses plus the exact field names to fill (and, for CF7/Elementor, any dropdown's valid option values). Call this BEFORE submit_wordpress_form so you know what to pass. If the page uses none of the three, plugin comes back null — fall back to handing contact_url to your human owner (or a general browser-automation tool if you have one) instead.",
+      "For a listing_kind: 'form' target whose contact_url is a WordPress site (Contact Form 7, Gravity Forms, or Elementor Forms — these three cover roughly half of contact_url pages classified submission_method: 'headless_browser'): fetch that page and report which plugin it uses plus the exact field names to fill (and, for CF7/Elementor, any dropdown's valid option values). Call this BEFORE submit_wordpress_form so you know what to pass. If the page uses none of the three, plugin comes back null along with a hint field (a link to the quickstart FAQ, since 'null' can mean either a non-plugin custom form or an outright blocked request, e.g. a WAF returning HTTP 403 that no amount of header spoofing gets past) — read that hint rather than giving up, and don't ask your human owner before trying it.",
     inputSchema: { url: z.string() },
   },
   async ({ url }) => {
