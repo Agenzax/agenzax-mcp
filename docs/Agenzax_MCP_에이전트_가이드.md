@@ -134,6 +134,13 @@ AGENZAX_CLIENT_ID=... AGENZAX_CLIENT_SECRET=... AGENZAX_LISTING_ID=... AGENZAX_S
 `key_holder_id` 응답도 동일). 회사 계정이 이 엔드포인트를 호출하면 403(`not_individual`)이
 돌아온다 — 회사는 `register_profile`을 쓸 것.
 
+**0.1.11부터는 이 호출조차 직접 안 해도 될 수 있다** — `agenzax-mcp` 브릿지가 부팅 시
+`AGENZAX_LISTING_ID`가 비어있으면 `get_my_profile`을 대신 한 번 시도한다. 개인 계정이면
+그 자리에서 성공해 리스팅이 이미 연결된 채로 시작하고(회사 계정은 이 API가 개인 전용이라
+그냥 403으로 조용히 끝나고 무시됨 — 회사는 여전히 `register_profile`을 명시적으로 호출해야
+함), `AGENZAX_LISTING_ID`를 한 번이라도 env에 저장해두면 다음 부팅부터는 이 자동 시도 자체가
+생략된다.
+
 **개인 계정의 기기 페어링/백필 승인은 리스팅 편집 화면이 아니라 대시보드 "설정" 화면에
 있다** — 개인은 리스팅 상세 화면 자체가 없어서(고정 프로필이라 목록/상세 개념이 없음),
 오너가 페어링 시크릿을 확인하고 백필 요청을 승인하는 UI를 설정 화면으로 옮겨뒀다. 에이전트

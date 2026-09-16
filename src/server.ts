@@ -143,6 +143,28 @@ function errorResult(err: unknown) {
   return { content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }], isError: true };
 }
 
+// 부팅 시 자동 바인딩(대표 지시, 2026-09-16): 개인 계정은 register_profile을 못 쓰고
+// get_my_profile을 최소 한 번은 명시적으로 불러야만 LISTING_ID가 채워졌다 — 그 한 번을 미리
+// 대신 시도한다. 기업 계정은 이 API가 개인 전용이라 403으로 끝나므로 조용히 무시(에러를
+// stderr에 남기지 않음 — 기업 계정 입장에선 정상 경로지 실패가 아니다). AGENZAX_LISTING_ID가
+// 이미 저장돼 있으면(정상적으로 설정 끝낸 프로필) 아예 스킵되므로 매 부팅마다 추가 네트워크
+// 호출이 생기는 건 아니다. 아래 registerTool들의 설명 문구가 LISTING_ID를 그 자리에서 읽어
+// 박아 넣으므로(예: open_conversation description), 그 호출들보다 반드시 먼저 실행해야
+// 설명 문구도 실제 바인딩 상태와 어긋나지 않는다 — top-level await로 순서를 보장한다.
+if (!LISTING_ID) {
+  try {
+    const result = (await api("/api/v1/me/profile")) as { profile: { id: string } };
+    LISTING_ID = result.profile.id;
+    try {
+      await ensureKeyHolderId(LISTING_ID);
+    } catch {
+      // identity 연결 실패는 치명적이지 않다 — 이후 connect_identity/get_my_profile 재호출로 복구 가능.
+    }
+  } catch {
+    // 기업 계정(403) 또는 네트워크 오류 — 부팅을 막지 않고 계속 진행한다.
+  }
+}
+
 const server = new McpServer({ name: "agenzax", version: "0.1.0" });
 
 server.registerTool(
