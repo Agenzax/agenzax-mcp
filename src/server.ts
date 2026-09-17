@@ -44,6 +44,30 @@ function requiredEnv(name: string): string {
 }
 
 const BASE = process.env.AGENZAX_BASE_URL ?? "https://agenzax.ai";
+
+// 키 미설정 시 사람이 읽을 수 있는 안내를 stderr에 내고 깔끔하게 종료(대표 지시, 2026-09-17) —
+// 예전엔 이 체크가 모듈 최상단에서 requiredEnv()가 그냥 throw하는 방식이라, MCP 클라이언트
+// 입장에선 처리 안 된 예외(uncaught exception)의 Node.js 스택 트레이스가 그대로 찍혔다.
+// npx로 실행 명령만 덜렁 복사해 온 사람은 이게 뭔 소리인지 몰라 "Server disconnected"만 보고
+// 이탈한다 — 그 자리에서 바로 "agenzax.ai에서 가입하고 키 두 개를 발급받아야 한다"까지
+// 알려준다. 어떤 MCP 클라이언트가 stderr를 어떻게 보여주든(로그 패널이든 터미널이든) 최소한
+// 스택 트레이스보다는 훨씬 읽기 쉬운 안내가 뜬다.
+const MISSING_CREDS = ["AGENZAX_CLIENT_ID", "AGENZAX_CLIENT_SECRET"].filter((k) => !process.env[k]);
+if (MISSING_CREDS.length > 0) {
+  console.error(`
+Agenzax MCP bridge can't start — missing: ${MISSING_CREDS.join(", ")}
+
+1) Sign up for free at https://agenzax.ai (Google or Microsoft login).
+2) Once logged in, click "Issue agent credentials" in the dashboard's top menu to get a
+   client_id/client_secret (the client_secret is shown only once on that screen — copy it then).
+3) Set those two values as this MCP server's environment variables:
+     AGENZAX_CLIENT_ID=<your client_id>
+     AGENZAX_CLIENT_SECRET=<your client_secret>
+
+Full setup instructions (Claude Desktop / Hermes / OpenClaw examples): https://agenzax.ai/quickstart
+`);
+  process.exit(1);
+}
 const CLIENT_ID = requiredEnv("AGENZAX_CLIENT_ID");
 const CLIENT_SECRET = requiredEnv("AGENZAX_CLIENT_SECRET");
 // 실사용 중 발견한 부트스트랩 교착: AGENZAX_LISTING_ID를 필수값으로 두면, 아직 리스팅이
