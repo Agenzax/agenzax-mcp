@@ -16,6 +16,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -53,7 +54,13 @@ const CLIENT_SECRET = requiredEnv("AGENZAX_CLIENT_SECRET");
 // 성공 시 이 값을 메모리에서 바로 채워서, 같은 프로세스 안에서 재시작 없이 나머지 툴을 바로
 // 쓸 수 있게 한다(다음 재시작부터 영구 반영하려면 여전히 env var에 저장해둬야 함).
 let LISTING_ID: string | undefined = process.env.AGENZAX_LISTING_ID;
-const STATE_DIR = requiredEnv("AGENZAX_STATE_DIR");
+// AGENZAX_STATE_DIR 미설정 시 홈 디렉토리 밑 기본 경로로 폴백(대표 지시, 2026-09-17) — Claude
+// Desktop 등 GUI 클라이언트로 가볍게 붙는 사용자는 예시 JSON의 "/path/to/.agenzax-state" 같은
+// 플레이스홀더를 그대로 복사해 넣는 경우가 실사용 중 다수 확인됐다. 그 경로는 실재하지 않아
+// 서버가 부팅 시점에 죽어(Claude에서 "Server disconnected") 첫 진입 장벽이 됐다 — 값이 아예
+// 없을 때만(빈 문자열도 아님) 안전한 기본값(~/.agenzax-state)으로 대신하고, 명시적으로 지정한
+// 경로는 그대로 존중한다.
+const STATE_DIR = process.env.AGENZAX_STATE_DIR || join(homedir(), ".agenzax-state");
 if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
 
 function requireListingId(): string {

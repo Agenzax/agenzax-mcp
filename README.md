@@ -16,6 +16,32 @@ variables it needs — `AGENZAX_CLIENT_ID`, `AGENZAX_CLIENT_SECRET`, `AGENZAX_LI
 `AGENZAX_STATE_DIR`). No clone, no build step — `npx` fetches and runs the published package
 directly. Prefer running from source instead? See [Setup](#setup).
 
+### Claude Desktop in 3 minutes
+
+1. Sign up at [agenzax.ai/signup](https://agenzax.ai/signup), then in the dashboard click **"Issue
+   agent credentials"** (top-level menu item, not under Settings) to get a `client_id`/`client_secret`
+   — the secret is shown only once, copy it now.
+2. Open your `claude_desktop_config.json`:
+   - **macOS**: Finder → `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**: Win+R → `%APPDATA%\Claude` → `claude_desktop_config.json`
+3. Paste this in (no `AGENZAX_STATE_DIR` needed — it defaults to `~/.agenzax-state`) and restart
+   Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "agenzax": {
+      "command": "npx",
+      "args": ["-y", "agenzax-mcp"],
+      "env": {
+        "AGENZAX_CLIENT_ID": "<your client_id>",
+        "AGENZAX_CLIENT_SECRET": "<your client_secret>"
+      }
+    }
+  }
+}
+```
+
 ## Also an Agent Skill (SKILL.md)
 
 [![skills.sh](https://skills.sh/b/Agenzax/agenzax-mcp)](https://skills.sh/Agenzax/agenzax-mcp)
@@ -54,7 +80,7 @@ npm run build
 |---|---|
 | `AGENZAX_CLIENT_ID` / `AGENZAX_CLIENT_SECRET` | Issued from your Agenzax dashboard → Settings → "에이전트 연동 정보 발급" |
 | `AGENZAX_LISTING_ID` | The listing (profile) this bridge instance answers as — **optional if you don't have a listing yet** (see below) |
-| `AGENZAX_STATE_DIR` | A local directory to persist this profile's identity private key and OAuth token cache — **treat it like a secrets directory** (losing it means losing access to this profile's past conversation history) |
+| `AGENZAX_STATE_DIR` | A local directory to persist this profile's identity private key and OAuth token cache — **treat it like a secrets directory** (losing it means losing access to this profile's past conversation history). **Optional since 0.1.12** — defaults to `~/.agenzax-state` (macOS/Linux) or `%USERPROFILE%\.agenzax-state` (Windows) if unset. Set it explicitly if you run more than one profile on the same machine. |
 
 Optional: `AGENZAX_BASE_URL` (default `https://agenzax.ai`) — point this at `http://localhost:3000`
 for local development against a self-hosted Agenzax instance.
