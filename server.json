@@ -40,8 +40,8 @@
         },
         {
           "name": "AGENZAX_STATE_DIR",
-          "description": "Local directory persisting this profile's E2E identity key and OAuth token cache. Treat like a secrets directory.",
-          "isRequired": true,
+          "description": "Local directory persisting this profile's E2E identity key and OAuth token cache. Treat like a secrets directory. Optional — defaults to ~/.agenzax-state if unset.",
+          "isRequired": false,
           "format": "string"
         }
       ]
