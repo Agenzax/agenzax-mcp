@@ -8,6 +8,7 @@
 // 도달 불가능)을, 이 프로세스가 대신 웹소켓으로 받아 localhost로만 전달해주는 셈이다.
 import WebSocket from "ws";
 import { createHmac } from "crypto";
+import { HttpsProxyAgent } from "https-proxy-agent";
 
 export interface RealtimeOptions {
   baseUrl: string;
@@ -21,6 +22,19 @@ export interface RealtimeOptions {
 
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
+
+/**
+ * ws 라이브러리는 raw TLS 소켓을 직접 열어 HTTPS_PROXY/HTTP_PROXY 환경변수를 전혀 읽지 않는다
+ * (fetch/undici와 다름). egress가 프록시로만 열려있는 환경(예: 이 VM)에서는 agent 옵션 없이는
+ * TLS ClientHello가 프록시의 평문 HTTP 포트로 그대로 전송되어 핸드셰이크 단계에서 깨진다
+ * (tls_validate_record_header: wrong version number, 재연결은 영원히 반복되지만 항상 실패).
+ */
+function proxyAgentFor(url: string): HttpsProxyAgent<string> | undefined {
+  if (!/^wss:/i.test(url)) return undefined; // 로컬 개발용 ws:// URL은 프록시 대상에서 제외
+  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+  if (!proxy) return undefined;
+  return new HttpsProxyAgent(proxy);
+}
 
 function deriveWsUrl(baseUrl: string): string | null {
   try {
@@ -71,7 +85,11 @@ export function startRealtimeClient(opts: RealtimeOptions): void {
       return;
     }
 
-    const ws = new WebSocket(`${wsUrl}?listing_id=${opts.listingId}`, { headers: { Authorization: `Bearer ${bearer}` } });
+    const wsTarget = `${wsUrl}?listing_id=${opts.listingId}`;
+    const ws = new WebSocket(wsTarget, {
+      headers: { Authorization: `Bearer ${bearer}` },
+      agent: proxyAgentFor(wsTarget),
+    });
 
     ws.on("open", () => {
       console.error("[realtime] Connected — receiving events by push instead of polling.");
