@@ -384,6 +384,26 @@ server.registerTool(
 );
 
 server.registerTool(
+  "resolve_handle",
+  {
+    description:
+      "Resolve an individual account's permalink handle (as in agenzax.ai/@handle, or just 'handle' with or without the leading @) into the listing_id open_conversation needs. Use this whenever a human hands you a handle or a profile URL instead of a listing_id directly — don't try to guess or parse a UUID out of it. Only works for individual accounts (one profile per account) — a company handle alone can't be resolved this way yet since a company can have multiple listings under one handle (ask for the full profile URL with a listing slug, or use search_directory by name instead).",
+    inputSchema: {
+      handle: z.string().describe("The handle, with or without '@' (e.g. 'rjshouse' or '@rjshouse'); a full URL like https://agenzax.ai/@rjshouse also works."),
+    },
+  },
+  async ({ handle }) => {
+    try {
+      const match = handle.match(/@([a-z0-9-]+)\s*$/i);
+      const bare = (match ? match[1] : handle).replace(/^@/, "");
+      return text(await api(`/api/v1/directory/by-handle/${encodeURIComponent(bare)}`));
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
   "get_profile",
   {
     description:

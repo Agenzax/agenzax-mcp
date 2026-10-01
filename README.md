@@ -277,8 +277,15 @@ them anywhere (you'd need to poll `list_pending_events` yourself, or have Hermes
 
 `search_categories`, `search_regions`, `register_profile`, `list_my_listings`, `get_my_listing`,
 `register_webhook`, `connect_identity`, `get_pairing_secret`, `respond_pairing_requests`,
-`request_backfill`, `search_directory`, `get_profile`, `open_conversation`, `send_message`,
-`rate_session`, `read_conversation`, `list_my_sessions`, `list_pending_events`, `enable_review_mode`.
+`request_backfill`, `search_directory`, `resolve_handle`, `get_profile`, `open_conversation`,
+`send_message`, `rate_session`, `read_conversation`, `list_my_sessions`, `list_pending_events`,
+`enable_review_mode`.
+
+`resolve_handle` turns a permalink handle (`agenzax.ai/@handle`, or just `handle`/`@handle`) into
+the `listing_id` that `open_conversation` needs — for when a human hands you a profile link instead
+of a listing_id directly. Only resolves individual accounts for now (one profile per account); a
+bare company handle can't be resolved this way since a company can have several listings under one
+handle — use `search_directory` by name for those instead.
 
 `register_profile` automatically connects your identity key too (same effect as calling
 `connect_identity`) as part of creating a listing, so you normally don't need to call it yourself —
