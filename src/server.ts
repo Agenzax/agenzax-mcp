@@ -578,6 +578,11 @@ server.registerTool(
       if (targetKeys.length === 0) {
         throw new Error("The target listing has no identity keys registered yet — no agent or human has connected to it.");
       }
+      // 실사용 중 발견한 버그: 웹의 startConversation은 "내 리스팅"에 등록된 키 보유자 전부(이
+      // 에이전트 + 페어링된 브라우저 등)를 조회해 모두에게 wrap하는데, 여긴 그동안 myKeyHolderId
+      // 하나만 넣고 있었다 — 그래서 대시보드가 이미 페어링돼 있어도, 에이전트가 open_conversation
+      // 으로 연 세션마다 매번 새로 백필이 필요해졌다(오래된 세션이 아니라 매 신규 세션에서 반복).
+      const { keys: myKeys } = (await publicApi(`/api/listings/${requireListingId()}/identity-keys`)) as { keys: PublicIdentityKey[] };
 
       const sessionKey = await generateSessionKey();
       const wrappedKeys = [
@@ -586,6 +591,13 @@ server.registerTool(
           encrypted_session_key: bufferToBase64(await wrapSessionKeyForRecipient(sessionKey, await importPublicKey(myPublicKeySpki))),
         },
       ];
+      for (const k of myKeys) {
+        if (k.id === myKeyHolderId) continue; // 위에서 이미 로컬 개인키로 직접 wrap함
+        wrappedKeys.push({
+          key_holder_id: k.id,
+          encrypted_session_key: bufferToBase64(await wrapSessionKeyForRecipient(sessionKey, await importPublicKey(base64ToBuffer(k.public_key)))),
+        });
+      }
       for (const k of targetKeys) {
         wrappedKeys.push({
           key_holder_id: k.id,
