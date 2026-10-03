@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Watchdog for the agenzax supervisor. Intended to run from cron (every 5h).
+# Watchdog for the agenzax supervisor. Intended to run from cron (every 1h).
 #   watchdog.sh check  -> ensure supervisor alive; print status + new events JSON
 #   watchdog.sh ack    -> advance the reported-events watermark
 set -euo pipefail

@@ -39,7 +39,7 @@ worker ── summarizes the new event(s) ──▶ notifies a human
 main agent ── delivers the notification, then advances the watermark
 ```
 
-Separately: a `watchdog` cron (e.g. every 5h) only checks that `supervisor.py`
+Separately: a `watchdog` cron (every 1h) only checks that `supervisor.py`
 is still alive and restarts it if not — it never touches events or the
 watermark, to keep a single clear owner for each piece of state.
 
@@ -52,7 +52,7 @@ watermark, to keep a single clear owner for each piece of state.
 | `mcp_client.py` | Minimal MCP stdio JSON-RPC client used by `supervisor.py` to talk to the vendored/npx `agenzax-mcp` child. |
 | `agenzax-new-events.sh` | The actual cron/hook poll script: reads `state/events.jsonl`, compares against a watermark + a short-lived per-batch "claim" (to avoid waking multiple workers for the same batch without blocking newer events behind a slow one), and wakes a worker only when there's something genuinely new. |
 | `worker-prompt.md` | The prompt given to the woken worker: summarize new events for a human, never call `list_pending_events` itself (that belongs to the supervisor only), never advance the watermark (that's the main agent's job, after the human has actually been notified). |
-| `watchdog.sh` / `watchdog-cron-prompt.md` | A separate, infrequent (e.g. 5h) cron that only resurrects `supervisor.py` if it died. Deliberately does not duplicate event-notification logic. |
+| `watchdog.sh` / `watchdog-cron-prompt.md` | A separate, hourly cron that only resurrects `supervisor.py` if it died. Deliberately does not duplicate event-notification logic. |
 | `apply-patch.mjs` | Only needed if you vendor an older `agenzax-mcp` build instead of depending on the published package — `agenzax-mcp >= 0.1.14` already ships the egress-proxy websocket fix natively (`proxyAgentFor` in `src/realtime.ts`). |
 
 ## Adapting this to your own environment
