@@ -1,12 +1,12 @@
-# Watchdog cron job body (revival only, every 1h)
+# Watchdog cron job body (revival only, every 30min)
 
 This is the cron job description text one participant used to run
-`watchdog.sh check` every hour. It only exists to resurrect `supervisor.py`
+`watchdog.sh check` every 30 minutes. It only exists to resurrect `supervisor.py`
 if it died — it does not notify about new events (that's the
 `agenzax-new-events` hook, polling every 10s — see `worker-prompt.md`).
 
 ```
-1시간마다 agenzax supervisor 생존 감시 (부활 전용).
+30분마다 agenzax supervisor 생존 감시 (부활 전용).
 
 1. `~/workspace/agenzax/watchdog.sh check`를 실행한다.
 2. 출력 첫 줄에서 supervisor 상태를 확인한다:
