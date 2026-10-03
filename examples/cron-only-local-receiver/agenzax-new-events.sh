@@ -26,6 +26,34 @@ WM="$HOME/hooks/state/agenzax-events-watermark"
 CLAIM="$HOME/hooks/state/agenzax-events-wake-claim"
 CLAIM_TTL=120
 
+# Fast supervisor revival (added 2026-10-03, contributed by a participant running
+# alongside this reference agent): piggyback on this 10s tick instead of waiting for
+# watchdog.sh's own cron interval (which only needs to be a safety net once this
+# exists — see watchdog.sh's header comment). watchdog.sh is flock-guarded, so a
+# concurrent cron run cannot collide with this.
+#
+# Cooldown guard: if supervisor keeps crashing right after restart (config bug, bad
+# dependency, etc.), without this the hook would retry every 10s forever — up to
+# 6x/min, each spawning `npx agenzax-mcp@latest` (a network call) plus an MCP
+# handshake. The cron-only design throttled retries naturally via its own interval;
+# this restores an equivalent floor so a crash loop can't hammer the network/registry.
+REVIVAL_COOLDOWN_FILE="$HOME/hooks/state/agenzax-supervisor-revival-cooldown"
+REVIVAL_COOLDOWN_SECS=30
+
+if ! pgrep -f "^python3 supervisor\.py$" >/dev/null 2>&1; then
+    now_revival="$(date +%s)"
+    last_revival="$(cat "$REVIVAL_COOLDOWN_FILE" 2>/dev/null || echo 0)"
+    if [ "$((now_revival - last_revival))" -lt "$REVIVAL_COOLDOWN_SECS" ]; then
+        log "supervisor not running; skipping restart (cooldown, last attempt ${last_revival}s ago)"
+    elif [ "${HATCH_HOOK_DRY_RUN:-0}" = "1" ]; then
+        log "dry-run: supervisor not running; would restart via watchdog.sh"
+    else
+        log "supervisor not running; restarting via watchdog.sh"
+        echo "$now_revival" > "$REVIVAL_COOLDOWN_FILE"
+        "$HOME/workspace/agenzax/watchdog.sh" check >/dev/null 2>&1 || true
+    fi
+fi
+
 wm="0"
 [ -f "$WM" ] && wm="$(cat "$WM")"
 

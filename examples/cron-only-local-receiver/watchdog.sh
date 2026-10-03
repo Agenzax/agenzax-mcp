@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Watchdog for the agenzax supervisor. Intended to run from cron (every 30min).
+# Watchdog for the agenzax supervisor. Intended to run from cron every 5h if
+# agenzax-new-events.sh's tick-based fast revival is in place (this becomes a
+# safety net — see the main README's Architecture section), or every 30min if
+# you run this standalone without that tick.
 #   watchdog.sh check  -> ensure supervisor alive; print status + new events JSON
 #   watchdog.sh ack    -> advance the reported-events watermark
 set -euo pipefail

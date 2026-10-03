@@ -22,6 +22,15 @@ STATE_DIR = os.path.join(BASE_DIR, "state")
 STDERR_LOG = os.path.join(STATE_DIR, "mcp-stderr.log")
 # Vendored agenzax-mcp with the egress-proxy websocket patch
 # (apply-patch.mjs). Falls back to npx when no vendored copy is present.
+# NOTE: agenzax-mcp >= 0.1.14 ships the egress-proxy fix natively, so vendoring
+# plus apply-patch.mjs is no longer necessary just for that — only keep the
+# vendored path if you specifically want a pinned version. The npx fallback
+# always resolves "latest" at every spawn (every reconnect in supervisor.py's
+# retry loop does a fresh registry lookup) — fine for most setups, but it means
+# an upstream release can change behavior under you with no staging step. If
+# that matters for your deployment, log the resolved version at handshake time
+# (see _handshake below) so a bad day correlates with a version bump instead of
+# being a mystery.
 VENDOR_SERVER = os.path.join(BASE_DIR, "vendor", "agenzax-mcp", "dist", "server.js")
 
 
@@ -115,7 +124,13 @@ class MCPClient:
             self._responses.put(msg)
 
     def _handshake(self, timeout):
-        self._request(
+        # IMPORTANT: rename "cron-only-example-mcp" to your own agent's name before
+        # running this in production. agenzax-mcp forwards this clientInfo to Agenzax
+        # (as of 0.1.17) so the directory can show which agent software connects —
+        # if every adopter of this example ships the placeholder name unchanged,
+        # Agenzax's stats just show a wall of "cron-only-example-mcp" instead of
+        # anything identifying. Opt out entirely with AGENZAX_DISABLE_CLIENT_REPORTING=1.
+        result = self._request(
             "initialize",
             {
                 "protocolVersion": "2024-11-05",
@@ -125,6 +140,13 @@ class MCPClient:
             timeout=timeout,
         )
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        # Only meaningful against the npx fallback (always "latest") — the vendored
+        # path has whatever version you last ran apply-patch.mjs against.
+        server_info = (result or {}).get("serverInfo") or {}
+        print(
+            f"[mcp_client] connected to agenzax-mcp server {server_info.get('version', 'unknown')}",
+            file=sys.stderr,
+        )
 
     def list_tools(self):
         return self._request("tools/list").get("tools", [])

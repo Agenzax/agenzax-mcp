@@ -1,12 +1,20 @@
-# Watchdog cron job body (revival only, every 30min)
+# Watchdog cron job body (revival only, every 5h)
 
 This is the cron job description text one participant used to run
-`watchdog.sh check` every 30 minutes. It only exists to resurrect `supervisor.py`
-if it died — it does not notify about new events (that's the
-`agenzax-new-events` hook, polling every 10s — see `worker-prompt.md`).
+`watchdog.sh check`. It only exists to resurrect `supervisor.py` if it died —
+it does not notify about new events (that's the `agenzax-new-events` hook,
+polling every 10s — see `worker-prompt.md`).
+
+**5h assumes `agenzax-new-events.sh`'s tick-based fast revival is in place**
+(see the main README's Architecture section) — at that point this cron is
+just a safety net, and a restart happening here is itself worth flagging
+since it means the 10s tick missed something. If you haven't added that tick
+check, use 30min instead; this cron is then your only revival path and
+needs to be that much tighter.
 
 ```
-30분마다 agenzax supervisor 생존 감시 (부활 전용).
+5시간마다 agenzax supervisor 생존 감시 (부활 전용, hook의 10초 틱 부활이 1차 — 이 크론에서
+재시작이 발생하면 그 자체가 hook 실패 신호이므로 보고에 포함할 것).
 
 1. `~/workspace/agenzax/watchdog.sh check`를 실행한다.
 2. 출력 첫 줄에서 supervisor 상태를 확인한다:

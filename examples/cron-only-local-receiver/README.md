@@ -31,6 +31,7 @@ supervisor.py (5s tick) ── on push, immediately calls list_pending_events
   ▼
 cron/hook poll (agenzax-new-events.sh, 10s interval)
   │ ④ if there are records newer than the watermark/claim, wake a worker
+  │    (same tick also pgrep-checks supervisor.py and self-heals it — see below)
   ▼
 worker ── summarizes the new event(s) ──▶ notifies a human
   │ ⑤ sender/session/time + any tier-1 approval prompt; never auto-replies
@@ -38,9 +39,21 @@ worker ── summarizes the new event(s) ──▶ notifies a human
 main agent ── delivers the notification, then advances the watermark
 ```
 
-Separately: a `watchdog` cron (every 30min) only checks that `supervisor.py`
-is still alive and restarts it if not — it never touches events or the
-watermark, to keep a single clear owner for each piece of state.
+**Fast revival, piggybacked on the 10s tick** (added 2026-10-03): `agenzax-new-events.sh`
+also does a `pgrep` check for `supervisor.py` on every tick and calls `watchdog.sh check`
+immediately if it's down, instead of waiting for the slower cron below. A 30-second
+cooldown file prevents this from hammering retries into a crash loop if the supervisor
+keeps dying right after restart — without it, a persistently broken supervisor would get
+re-spawned up to 6x/minute, each attempt spawning `npx agenzax-mcp@latest` (a network
+call) plus an MCP handshake.
+
+Separately: a `watchdog` cron only checks that `supervisor.py` is still alive and
+restarts it if not — it never touches events or the watermark, to keep a single clear
+owner for each piece of state. **With the fast-revival tick above in place, this cron is
+just a safety net and 5h is plenty** (if the tick catches every death within ~10s, the
+cron restarting anything is itself a signal the tick failed, worth alerting on). If you
+*don't* add the tick-based revival, keep the cron at 30min instead — it's then your only
+revival path.
 
 ## Files
 
@@ -49,9 +62,9 @@ watermark, to keep a single clear owner for each piece of state.
 | `receiver.py` | Tiny HTTP server on `127.0.0.1:8099`. Verifies the HMAC signature on every `AGENZAX_LOCAL_WAKE_URL` POST and appends it to `state/push_events.jsonl`. Binds loopback-only — never exposed. |
 | `supervisor.py` | Long-running process: keeps `receiver.py` and an `agenzax-mcp` stdio child alive, and on every push, immediately calls `list_pending_events` to pull the real event(s) into `state/events.jsonl`. Also does one blind daily backfill poll as a safety net for anything missed while the websocket was down. |
 | `mcp_client.py` | Minimal MCP stdio JSON-RPC client used by `supervisor.py` to talk to the vendored/npx `agenzax-mcp` child. |
-| `agenzax-new-events.sh` | The actual cron/hook poll script: reads `state/events.jsonl`, compares against a watermark + a short-lived per-batch "claim" (to avoid waking multiple workers for the same batch without blocking newer events behind a slow one), and wakes a worker only when there's something genuinely new. |
+| `agenzax-new-events.sh` | The actual cron/hook poll script: reads `state/events.jsonl`, compares against a watermark + a short-lived per-batch "claim" (to avoid waking multiple workers for the same batch without blocking newer events behind a slow one), and wakes a worker only when there's something genuinely new. Also self-heals a dead `supervisor.py` on the same 10s tick (cooldown-guarded — see Architecture above). |
 | `worker-prompt.md` | The prompt given to the woken worker: summarize new events for a human, never call `list_pending_events` itself (that belongs to the supervisor only), never advance the watermark (that's the main agent's job, after the human has actually been notified). |
-| `watchdog.sh` / `watchdog-cron-prompt.md` | A separate, 30-minute cron that only resurrects `supervisor.py` if it died. Deliberately does not duplicate event-notification logic. |
+| `watchdog.sh` / `watchdog-cron-prompt.md` | A cron that only resurrects `supervisor.py` if it died — a safety net given the tick-based revival above, or your sole revival path if you skip that. Deliberately does not duplicate event-notification logic. |
 | `apply-patch.mjs` | Only needed if you vendor an older `agenzax-mcp` build instead of depending on the published package — `agenzax-mcp >= 0.1.14` already ships the egress-proxy websocket fix natively (`proxyAgentFor` in `src/realtime.ts`). |
 
 ## Adapting this to your own environment
