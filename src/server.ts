@@ -96,20 +96,39 @@ function requireListingId(): string {
   return LISTING_ID;
 }
 
+// MCP initialize 핸드셰이크에서 클라이언트가 스스로 밝힌 이름/버전(예: claude-ai/0.1.0).
+// Agenzax가 탐지하는 게 아니라 클라이언트가 보내주는 값이고, 보내지 않아도 모든 기능은 동일하게
+// 동작한다 — 어떤 에이전트들이 실제로 연결돼 있는지 집계하는 용도로만 쓴다(개인정보처리방침의
+// "수집 항목"에 같은 범위로 고지). 호스트명·경로·계정 환경 같은 건 담지 않는다.
+let clientLabel: string | null = null;
+
+/** 이 값을 보내고 싶지 않으면 AGENZAX_DISABLE_CLIENT_REPORTING=1로 끌 수 있다. */
+const CLIENT_REPORTING_DISABLED = process.env.AGENZAX_DISABLE_CLIENT_REPORTING === "1";
+
 const tokenCachePath = join(STATE_DIR, "token-cache.json");
 async function getBearer(): Promise<string> {
   if (existsSync(tokenCachePath)) {
     const cached = JSON.parse(readFileSync(tokenCachePath, "utf8"));
-    if (cached.expires_at > Date.now() + 30_000) return cached.access_token;
+    // 핸드셰이크 전에 받아둔 토큰(클라이언트 정보 없이 발급)이면 한 번만 다시 받는다 —
+    // 안 그러면 캐시가 만료되는 1시간 뒤에야 처음으로 신고가 올라간다.
+    const staleLabel = Boolean(clientLabel) && cached.client_label !== clientLabel;
+    if (cached.expires_at > Date.now() + 30_000 && !staleLabel) return cached.access_token;
   }
+  // 이 요청에 "실제로 실어 보낸" 값을 고정해둔다 — 아래 캐시에 현재 clientLabel을 그대로 쓰면,
+  // 핸드셰이크 직전에 시작된 요청이 핸드셰이크 직후에 끝날 때 보내지도 않은 값을 기록해버려
+  // staleLabel이 영영 false가 된다(실제로 이 버그로 헤더가 한 번도 안 나갔다).
+  const sentLabel = clientLabel;
   const res = await fetch(`${BASE}/oauth/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(sentLabel ? { "X-Agenzax-Client": sentLabel } : {}) },
     body: JSON.stringify({ grant_type: "client_credentials", client_id: CLIENT_ID, client_secret: CLIENT_SECRET }),
   });
   const json = await res.json();
   if (!res.ok) throw new Error(`Token request failed: ${JSON.stringify(json)}`);
-  writeFileSync(tokenCachePath, JSON.stringify({ access_token: json.access_token, expires_at: Date.now() + json.expires_in * 1000 }));
+  writeFileSync(
+    tokenCachePath,
+    JSON.stringify({ access_token: json.access_token, expires_at: Date.now() + json.expires_in * 1000, client_label: sentLabel })
+  );
   return json.access_token;
 }
 
@@ -871,6 +890,15 @@ async function main() {
     });
   } else {
     console.error("[realtime] AGENZAX_LISTING_ID not set yet — skipping realtime connection until this server is restarted with it set.");
+  }
+
+  // 핸드셰이크가 끝나야 클라이언트 정보가 들어온다 — connect 전에 걸어둬야 첫 initialize를 놓치지 않는다.
+  if (!CLIENT_REPORTING_DISABLED) {
+    server.server.oninitialized = () => {
+      const info = server.server.getClientVersion();
+      if (!info?.name) return;
+      clientLabel = info.version ? `${info.name}/${info.version}` : info.name;
+    };
   }
 
   const transport = new StdioServerTransport();
